@@ -143,12 +143,15 @@ class TestDashboard:
 
         def inspections(kw):
             assert kw["headers"]["Authorization-Key"] == "k"
-            return json.dumps({"resultcount": 1, "result": [
+            body = json.loads(kw["data"])
+            assert body["columns"] == [] and body["start"] == 1 and body["returntotalcount"] is True
+            return json.dumps({"statuscode": 400, "message": "Success.", "totalrecordcount": 1, "resultcount": 1, "result": [
                 {"InspectionID": 555, "FEINumber": "3009990001", "LegalName": "Example Pharma Inc.",
-                 "InspectionEndDate": "2024-10-10", "Classification": "OAI", "ProductType": "Drugs"}]}).encode()
+                 "InspectionEndDate": "2024-10-10", "Classification": "Official Action Indicated (OAI)",
+                 "ClassificationCode": "OAI", "ProductType": "Drugs", "CountryName": "United States"}]}).encode()
 
         def actions(kw):
-            return json.dumps({"resultcount": 1, "result": [
+            return json.dumps({"totalrecordcount": 1, "resultcount": 1, "result": [
                 {"CaseInjunctionID": 9, "FEINumber": "3009990001", "ActionType": "Warning Letter",
                  "ActionTakenDate": "2025-03-04"}]}).encode()
 
@@ -159,3 +162,40 @@ class TestDashboard:
         assert insp.classification == "OAI" and insp.end_date == date(2024, 10, 10)
         assert session.scalars(select(ComplianceAction)).one().facility_id == insp.facility_id
         assert session.scalar(select(func.count()).select_from(Facility)) == 1
+
+
+def test_dashboard_error_is_raised_not_read_as_empty():
+    import pytest
+    from auditcore.ingest.dashboard import DashboardClient, DashboardError
+
+    settings = Settings(database_url="sqlite://", request_delay_s=0, dashboard_user="u", dashboard_key="k",
+                        dashboard_base_url="https://api.test/v1")
+    err = json.dumps([{"statuscode": 410, "message": "Required parameter(s) missing from request body.",
+                       "missing_parameters": ["columns"]}]).encode()
+    client = DashboardClient(FakeFetcher({"https://api.test/v1/compliance_actions": err}, settings))
+    with pytest.raises(DashboardError, match="missing"):
+        list(client.pages("compliance_actions", {}))
+
+
+def test_dashboard_pages_until_total():
+    from auditcore.ingest import dashboard as dash
+
+    settings = Settings(database_url="sqlite://", request_delay_s=0, dashboard_user="u", dashboard_key="k",
+                        dashboard_base_url="https://api.test/v1")
+    starts = []
+
+    def page(kw):
+        body = json.loads(kw["data"])
+        starts.append(body["start"])
+        n = min(2, 5 - body["start"] + 1)
+        return json.dumps({"totalrecordcount": 5, "resultcount": n,
+                           "result": [{"InspectionID": body["start"] + i} for i in range(n)]}).encode()
+
+    old = dash.PAGE_SIZE
+    dash.PAGE_SIZE = 2
+    try:
+        client = dash.DashboardClient(FakeFetcher({"https://api.test/v1/x": page}, settings))
+        rows = [r for _, _, page_rows in client.pages("x", {}) for r in page_rows]
+    finally:
+        dash.PAGE_SIZE = old
+    assert starts == [1, 3, 5] and len(rows) == 5

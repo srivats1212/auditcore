@@ -142,10 +142,16 @@ auditcore serve
   the gold set.
 - **Remediation patterns are not written.** Only the template exists. These
   are the practitioner-written moat and should come from you.
-- **Data Dashboard API is untested live.** fda.gov (letters, listings,
-  reading-room PDFs) was verified end to end on 2026-10-23, but
-  `api-datadashboard.fda.gov` was not reachable from the build environment and
-  no key was available. Field names follow the dashboard's published columns.
+- **Data Dashboard ingestion needs your key to finish verifying.** fda.gov
+  (letters, listings, reading-room PDFs) was verified end to end on
+  2026-10-23. For the Dashboard API, the request format and field names were
+  checked against FDA's published OpenAPI spec and the live endpoint accepts
+  the request; without a key it stops at 401. Request a free key from the
+  Dashboard API page and run `auditcore ingest dashboard --product-type Drugs`.
+- **Unused Dashboard endpoint worth a look:** `inspections_citations` lists
+  CFR citations for inspections whose 483s were never published. That is
+  structured enforcement data beyond the published-483 corpus; the PRD keeps
+  unpublished 483s out of scope, so it is not ingested.
 - **Rules were spot-checked, not evaluated.** On 40 recent CGMP drug letters the
   rules fire rarely and mostly correctly after tuning; recall is low by design
   and comes from the LLM stage. Real precision and recall come from the gold set.
