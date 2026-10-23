@@ -115,38 +115,26 @@ def rules_tag_citation(session: Session, citation: Citation, taxonomy: Taxonomy)
     return added
 
 
-def llm_tag_citation(session: Session, citation: Citation, tagger: LlmTagger) -> int:
-    """Propose LLM tags for one citation. Sibling citations (same observation,
-    same text, one per cited CFR section) share one model call: the first is
-    sent with every section the violation cites, and later siblings copy its
-    proposals instead of calling again."""
-    already = session.scalars(
-        select(FailureMode.id).where(FailureMode.citation_id == citation.id, FailureMode.provenance == "llm")
-    ).first()
-    if already is not None:
-        return 0
+def _sibling_rows(session: Session, citation: Citation) -> list[FailureMode]:
+    siblings = [c.id for c in citation.observation.citations if c.text == citation.text and c.id != citation.id]
+    if not siblings:
+        return []
+    return list(session.scalars(select(FailureMode).where(
+        FailureMode.citation_id.in_(siblings), FailureMode.provenance == "llm")))
+
+
+def _llm_request(citation: Citation) -> tuple[str, str, str | None]:
+    """(text, document kind, CFR sections) sent to the model. The CFR line
+    lists every section the violation cites, since one call covers all
+    sibling citations."""
     obs = citation.observation
-    siblings = [c for c in obs.citations if c.text == citation.text]
-    done = session.scalars(select(FailureMode).where(
-        FailureMode.citation_id.in_([c.id for c in siblings if c.id != citation.id]),
-        FailureMode.provenance == "llm")).all()
-    if done:
-        source = min(f.citation_id for f in done)
-        copied = 0
-        for f in done:
-            if f.citation_id != source:
-                continue
-            session.add(FailureMode(citation_id=citation.id, mode_id=f.mode_id, taxonomy_version=f.taxonomy_version,
-                                    provenance="llm", confidence=f.confidence, evidence=f.evidence, model=f.model,
-                                    paper_only=f.paper_only, status=f.status if f.mode_id == "NONE" else "proposed",
-                                    reviewer=f.reviewer if f.mode_id == "NONE" else None,
-                                    reviewed_at=f.reviewed_at if f.mode_id == "NONE" else None))
-            copied += f.mode_id != "NONE"
-        return copied
-    cfrs = [c.cfr_reference.canonical for c in sorted(siblings, key=lambda c: c.ordinal) if c.cfr_reference]
-    cfr = "; ".join(dict.fromkeys(cfrs)) or None
+    siblings = sorted((c for c in obs.citations if c.text == citation.text), key=lambda c: c.ordinal)
+    cfrs = [c.cfr_reference.canonical for c in siblings if c.cfr_reference]
     # FDA's request list is not findings; leaving it out saves tokens and false positives.
-    tags = tagger.tag(strip_request_tail(citation.text), doc_kind=obs.kind, cfr=cfr)
+    return strip_request_tail(citation.text), obs.kind, "; ".join(dict.fromkeys(cfrs)) or None
+
+
+def _write_llm_tags(session: Session, citation: Citation, tags, tagger: LlmTagger) -> int:
     for t in tags:
         session.add(FailureMode(citation_id=citation.id, mode_id=t.mode_id, taxonomy_version=tagger.taxonomy.version,
                                 provenance="llm", confidence=t.confidence, evidence=t.evidence, model=tagger.model,
@@ -158,6 +146,104 @@ def llm_tag_citation(session: Session, citation: Citation, tagger: LlmTagger) ->
                                 reviewer="system", reviewed_at=utcnow()))
     session.flush()
     return len(tags)
+
+
+def _copy_from_sibling(session: Session, citation: Citation, done: list[FailureMode]) -> int:
+    source = min(f.citation_id for f in done)
+    copied = 0
+    for f in done:
+        if f.citation_id != source:
+            continue
+        none = f.mode_id == "NONE"
+        session.add(FailureMode(citation_id=citation.id, mode_id=f.mode_id, taxonomy_version=f.taxonomy_version,
+                                provenance="llm", confidence=f.confidence, evidence=f.evidence, model=f.model,
+                                paper_only=f.paper_only, status=f.status if none else "proposed",
+                                reviewer=f.reviewer if none else None, reviewed_at=f.reviewed_at if none else None))
+        copied += not none
+    session.flush()
+    return copied
+
+
+def _has_llm(session: Session, citation: Citation) -> bool:
+    return session.scalars(select(FailureMode.id).where(
+        FailureMode.citation_id == citation.id, FailureMode.provenance == "llm")).first() is not None
+
+
+def llm_tag_citation(session: Session, citation: Citation, tagger: LlmTagger) -> int:
+    """Propose LLM tags for one citation. Sibling citations (same observation,
+    same text, one per cited CFR section) share one model call: the first is
+    sent with every section the violation cites, and later siblings copy its
+    proposals instead of calling again."""
+    if _has_llm(session, citation):
+        return 0
+    done = _sibling_rows(session, citation)
+    if done:
+        return _copy_from_sibling(session, citation, done)
+    text, kind, cfr = _llm_request(citation)
+    return _write_llm_tags(session, citation, tagger.tag(text, doc_kind=kind, cfr=cfr), tagger)
+
+
+_RETRYABLE = (408, 409, 429, 500, 502, 503, 504, 529)
+
+
+def llm_tag_all(session: Session, citations: list[Citation], tagger: LlmTagger, *, llm_max: int | None = None,
+                workers: int = 1, stats: dict | None = None) -> dict:
+    """LLM stage over many citations: one call per distinct violation text,
+    up to ``llm_max`` calls, ``workers`` calls in flight at once. Model calls
+    run in threads; every database write stays on this thread. Proposals are
+    committed every 25 results so an interrupted paid run keeps them."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    stats = stats if stats is not None else {"llm_tags": 0, "llm_errors": 0}
+    stats.setdefault("llm_calls_skipped_siblings", 0)
+    jobs: list[Citation] = []
+    later: list[Citation] = []
+    claimed: set[tuple[int, str]] = set()
+    for c in citations:
+        if _has_llm(session, c):
+            continue
+        key = (c.observation_id, c.text)
+        if key in claimed or _sibling_rows(session, c):
+            later.append(c)  # a sibling carries (or will carry) the call
+            continue
+        claimed.add(key)
+        jobs.append(c)
+    if llm_max is not None:
+        jobs = jobs[:max(0, llm_max - tagger.usage.calls)]
+    requests = {c.id: _llm_request(c) for c in jobs}
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = {pool.submit(tagger.tag, requests[c.id][0], doc_kind=requests[c.id][1], cfr=requests[c.id][2]): c
+                   for c in jobs}
+        for fut in as_completed(futures):
+            c = futures[fut]
+            try:
+                stats["llm_tags"] += _write_llm_tags(session, c, fut.result(), tagger)
+            except (LlmRefusal, RuntimeError, ValueError) as exc:
+                stats["llm_errors"] += 1
+                log.warning("LLM tagging failed for citation %s: %s", c.id, exc)
+            except Exception as exc:
+                # Rate limits and overloads (after the SDK's own retries) skip this
+                # citation; it is retried next run. Auth and request errors abort.
+                if getattr(exc, "status_code", None) in _RETRYABLE:
+                    stats["llm_errors"] += 1
+                    log.warning("LLM call failed for citation %s, will retry next run: %s", c.id, exc)
+                else:
+                    for f in futures:
+                        f.cancel()
+                    session.commit()
+                    raise
+            done += 1
+            if done % 25 == 0:
+                session.commit()  # paid proposals survive an interrupted run
+                log.info("LLM: %d of %d calls done, $%.2f so far", done, len(jobs), tagger.usage.cost_usd)
+    for c in later:
+        if not _has_llm(session, c) and _sibling_rows(session, c):
+            stats["llm_tags"] += _copy_from_sibling(session, c, _sibling_rows(session, c))
+            stats["llm_calls_skipped_siblings"] += 1
+    session.commit()
+    return stats
 
 
 class ResegmentRefused(RuntimeError):
@@ -187,13 +273,15 @@ def clear_segmentation(session: Session) -> int:
 
 
 def run_pipeline(session: Session, taxonomy: Taxonomy, *, tagger: LlmTagger | None = None,
-                 limit: int | None = None, llm_max: int | None = None) -> dict:
-    """``limit`` caps documents; ``llm_max`` caps LLM calls (one per citation)."""
+                 limit: int | None = None, llm_max: int | None = None, llm_workers: int = 1) -> dict:
+    """``limit`` caps documents; ``llm_max`` caps LLM calls (one per distinct
+    violation text); ``llm_workers`` sets how many calls run at once."""
     stats = {"documents": 0, "observations": 0, "citations": 0, "rule_tags": 0, "llm_tags": 0, "llm_errors": 0}
     docs = session.scalars(
         select(Document).where(Document.is_current.is_(True), Document.source.in_(["form_483", "warning_letter"]))
         .order_by(Document.id)
     ).all()
+    citations: list[Citation] = []
     for doc in docs[:limit] if limit else docs:
         stats["documents"] += 1
         for obs in segment_document(session, doc):
@@ -201,23 +289,10 @@ def run_pipeline(session: Session, taxonomy: Taxonomy, *, tagger: LlmTagger | No
             for citation in obs.citations:
                 stats["citations"] += 1
                 stats["rule_tags"] += rules_tag_citation(session, citation, taxonomy)
-                if tagger is not None and (llm_max is None or tagger.usage.calls < llm_max):
-                    try:
-                        stats["llm_tags"] += llm_tag_citation(session, citation, tagger)
-                    except (LlmRefusal, RuntimeError, ValueError) as exc:
-                        stats["llm_errors"] += 1
-                        log.warning("LLM tagging failed for citation %s: %s", citation.id, exc)
-                    except Exception as exc:
-                        # Rate limits and overloads (after the SDK's own retries) skip this
-                        # citation; it is retried next run. Auth and request errors abort.
-                        if getattr(exc, "status_code", None) in (408, 409, 429, 500, 502, 503, 504, 529):
-                            stats["llm_errors"] += 1
-                            log.warning("LLM call failed for citation %s, will retry next run: %s", citation.id, exc)
-                        else:
-                            raise
+                citations.append(citation)
         session.flush()
-        if tagger is not None:
-            session.commit()  # paid proposals survive an interrupted run
     if tagger is not None:
+        session.commit()
+        llm_tag_all(session, citations, tagger, llm_max=llm_max, workers=llm_workers, stats=stats)
         stats["llm_usage"] = tagger.usage.as_dict()
     return stats

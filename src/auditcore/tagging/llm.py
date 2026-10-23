@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -182,6 +183,7 @@ class LlmTagger:
         ]
         self._schema = output_schema(taxonomy)
         self.usage = Usage()
+        self._usage_lock = threading.Lock()  # tag() may run in several threads
 
     def tag(self, citation_text: str, *, doc_kind: str, cfr: str | None) -> list[LlmTag]:
         prompt = (
@@ -199,7 +201,8 @@ class LlmTagger:
             messages=[{"role": "user", "content": prompt}],
         )
         # Price by the model that served the request: a refusal fallback may switch it.
-        self.usage.add(getattr(response, "model", None) or self.model, getattr(response, "usage", None))
+        with self._usage_lock:
+            self.usage.add(getattr(response, "model", None) or self.model, getattr(response, "usage", None))
         if response.stop_reason == "refusal":
             raise LlmRefusal(f"model declined: {getattr(response, 'stop_details', None)}")
         if response.stop_reason == "max_tokens":

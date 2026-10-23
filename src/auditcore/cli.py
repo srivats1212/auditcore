@@ -110,7 +110,8 @@ def cmd_process(a):
             from .tagging.pipeline import clear_segmentation
 
             print(f"cleared {clear_segmentation(s)} observations for re-segmentation")
-        _print(run_pipeline(s, tax, tagger=LlmTagger(tax) if a.llm else None, limit=a.limit, llm_max=a.llm_max))
+        _print(run_pipeline(s, tax, tagger=LlmTagger(tax) if a.llm else None, limit=a.limit, llm_max=a.llm_max,
+                            llm_workers=a.llm_workers))
 
 
 def _decision_label(item, paper_capable: bool) -> str:
@@ -396,7 +397,8 @@ def build_parser() -> argparse.ArgumentParser:
     x = sub.add_parser("process", help="segment documents and propose tags")
     x.add_argument("--llm", action="store_true", help="also run LLM tagging (needs Anthropic credentials)")
     x.add_argument("--limit", type=int, help="process at most this many documents")
-    x.add_argument("--llm-max", type=int, help="make at most this many LLM calls (one per citation)")
+    x.add_argument("--llm-max", type=int, help="make at most this many LLM calls (one per distinct violation text)")
+    x.add_argument("--llm-workers", type=int, default=1, help="LLM calls in flight at once (try 4 to 8)")
     x.add_argument("--resegment", action="store_true",
                    help="rebuild observations and citations with current code (refused once anything is reviewed)")
     x.set_defaults(fn=cmd_process)

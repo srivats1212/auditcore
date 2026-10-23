@@ -332,3 +332,43 @@ def test_llm_tags_each_distinct_text_once_and_copies_to_siblings(session, taxono
     copy = session.scalars(select(FailureMode).where(FailureMode.citation_id == cits[1].id)).one()
     assert (copy.evidence, copy.confidence, copy.status) == ("Audit trails", 0.9, "proposed")
     assert session.scalars(select(FailureMode.mode_id).where(FailureMode.citation_id == cits[2].id)).all() == ["NONE"]
+
+
+def test_llm_tag_all_runs_in_parallel_once_per_text_and_respects_the_cap(session, taxonomy, fake_client_factory,
+                                                                         fake_response):
+    from auditcore.models import CfrReference, Document
+    from auditcore.tagging.llm import LlmTagger
+    from auditcore.tagging.pipeline import llm_tag_all
+
+    doc = Document(source="warning_letter", source_key="wl:par", content_hash="hp", raw_path="x", media_type="text/html")
+    session.add(doc)
+    session.flush()
+    cits = []
+    for n in range(6):
+        text = f"Audit trails on HPLC {n} were not reviewed."
+        obs = Observation(document_id=doc.id, kind="wl", number=n + 1, observed_date=date(2025, 5, 1), text=text)
+        session.add(obs)
+        session.flush()
+        for i, sec in enumerate(["211.68", "211.192"]):
+            ref = session.scalars(select(CfrReference).where(CfrReference.section == sec)).first() \
+                or CfrReference(canonical=f"21 CFR {sec}", part="211", section=sec)
+            session.add(ref)
+            session.flush()
+            cit = Citation(observation_id=obs.id, ordinal=i, text=text, cfr_reference_id=ref.id)
+            session.add(cit)
+            session.flush()
+            cits.append(cit)
+
+    def responder(kw):
+        return fake_response(json.dumps({"tags": [
+            {"mode_id": "CS-AUD-002", "evidence": "Audit trails", "confidence": 0.9, "paper_only": False}]}))
+
+    client = fake_client_factory(responder)
+    tagger = LlmTagger(taxonomy, client=client)
+    stats = llm_tag_all(session, cits, tagger, llm_max=4, workers=4)
+    assert len(client.messages.calls) == 4                      # capped; siblings never call
+    tagged = [c.id for c in cits if tags_of(session, c.id, "llm")]
+    assert len(tagged) == 8 and stats["llm_tags"] == 8          # 4 calls, each copied to its sibling
+    llm_tag_all(session, cits, tagger, workers=4)               # the rest, on a second run
+    assert len(client.messages.calls) == 6
+    assert all(tags_of(session, c.id, "llm") == ["CS-AUD-002"] for c in cits)

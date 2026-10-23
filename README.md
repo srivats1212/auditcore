@@ -75,6 +75,7 @@ auditcore ingest runs
 # 2. Segment and propose tags
 auditcore process            # rules only (add --resegment after segmentation changes)
 auditcore process --llm --llm-max 20   # rules + Claude proposals; reports tokens, cost, cost per citation
+auditcore process --llm --llm-workers 6  # whole corpus, 6 calls in flight; resumable if interrupted
 
 # 3. Human review: nothing is counted until accepted here
 auditcore review --reviewer <you>          # terminal: a/p/e/r/s/q per proposed tag
