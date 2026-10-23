@@ -164,6 +164,8 @@ class TestCopyLint:
         assert find_em_dashes("this - that")
         assert not find_em_dashes("pre-approval, 21 CFR 211.68(b), CS-AUD-002")
         assert not find_em_dashes("- a bullet\n```\ncode -- here\n```")
+        assert not find_em_dashes("run `auditcore ingest dashboard --product-type Drugs` first")
+        assert find_em_dashes("`code` then prose--more")
         with pytest.raises(CopyStyleError):
             assert_clean("x — y", "t")
 

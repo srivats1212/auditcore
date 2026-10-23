@@ -12,6 +12,7 @@ from pathlib import Path
 
 # U+2014 em dash, U+2015 horizontal bar, and the ASCII stand-ins "--" / " - "
 # used as a sentence dash between words.
+_INLINE_CODE = re.compile(r"`[^`]*`")
 _EM_DASH = re.compile(r"[—―]|(?<=\w) ?-- ?(?=\w)|(?<=\w) - (?=\w)")
 
 
@@ -31,6 +32,7 @@ def find_em_dashes(text: str, where: str = "<text>") -> list[LintIssue]:
             continue
         if in_code:
             continue
+        line = _INLINE_CODE.sub(lambda m: " " * len(m.group(0)), line)  # `--flags` are code, not prose
         for m in _EM_DASH.finditer(line):
             lo = max(0, m.start() - 30)
             issues.append(LintIssue(where, n, line[lo : m.end() + 30].strip()))
