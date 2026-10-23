@@ -70,7 +70,8 @@ def cmd_ingest_483(a):
     from .ingest.form483 import ingest_reading_room
 
     with _session() as s:
-        _print(ingest_reading_room(s, _archive(), _fetcher(), listing_url=a.url, limit=a.limit, max_rows=a.max_rows))
+        _print(ingest_reading_room(s, _archive(), _fetcher(), listing_url=a.url, limit=a.limit, max_rows=a.max_rows,
+                                    since=date.fromisoformat(a.since) if a.since else None))
 
 
 def cmd_ingest_483_files(a):
@@ -111,7 +112,8 @@ def cmd_process(a):
 
             print(f"cleared {clear_segmentation(s)} observations for re-segmentation")
         _print(run_pipeline(s, tax, tagger=LlmTagger(tax) if a.llm else None, limit=a.limit, llm_max=a.llm_max,
-                            llm_workers=a.llm_workers))
+                            llm_workers=a.llm_workers,
+                            llm_since=date.fromisoformat(a.since) if a.since else None))
 
 
 def _decision_label(item, paper_capable: bool) -> str:
@@ -332,7 +334,7 @@ def cmd_report(a):
     from .taxonomy.loader import load_taxonomy
 
     with _session() as s:
-        out = build_report(s, load_taxonomy(), Path(a.out), samples=a.samples)
+        out = build_report(s, load_taxonomy(), Path(a.out), samples=a.samples, since_year=a.since)
     print(f"report: {out['html']}\ncsv:    {out['csv']}")
 
 
@@ -382,6 +384,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--url")
     x.add_argument("--max-rows", type=int, help="stop paging the listing after this many rows")
     x.add_argument("--limit", type=int, help="download at most this many PDFs this run")
+    x.add_argument("--since", help="skip records dated before this, e.g. 2021-01-01")
     x.set_defaults(fn=cmd_ingest_483)
     x = ing.add_parser("483-files", help="saved 483 PDFs, optional CSV manifest")
     x.add_argument("paths", nargs="+")
@@ -399,6 +402,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--limit", type=int, help="process at most this many documents")
     x.add_argument("--llm-max", type=int, help="make at most this many LLM calls (one per distinct violation text)")
     x.add_argument("--llm-workers", type=int, default=1, help="LLM calls in flight at once (try 4 to 8)")
+    x.add_argument("--since", help="send only citations issued on or after this date to the LLM, e.g. 2021-01-01")
     x.add_argument("--resegment", action="store_true",
                    help="rebuild observations and citations with current code (refused once anything is reviewed)")
     x.set_defaults(fn=cmd_process)
@@ -469,6 +473,7 @@ def build_parser() -> argparse.ArgumentParser:
     x = sub.add_parser("report", help="static HTML report and CSV export of the ingested corpus")
     x.add_argument("--out", default="reports")
     x.add_argument("--samples", type=int, default=3, help="sample citations kept per failure mode and year")
+    x.add_argument("--since", type=int, help="first issue year in the report, e.g. 2021 (the CSV keeps everything)")
     x.set_defaults(fn=cmd_report)
 
     x = sub.add_parser("serve", help="run the web UI")

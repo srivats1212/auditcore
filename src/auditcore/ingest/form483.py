@@ -163,6 +163,8 @@ def _store_483(session: Session, archive: RawArchive, run, data: bytes, *, key: 
             doc.text_raw, meta = "", {"extraction_error": str(exc)}
         doc.meta = {**(doc.meta or {}), **meta}
         doc.text_clean = clean_text(doc.text_raw)
+    if entry is not None and entry.record_type and (doc.meta or {}).get("record_type") != entry.record_type:
+        doc.meta = {**(doc.meta or {}), "record_type": entry.record_type}
 
     fei = (entry.fei if entry else None) or (doc.meta or {}).get("fei") or find_fei(doc.text_clean)
     fac = get_or_create_facility(
@@ -180,12 +182,23 @@ def _store_483(session: Session, archive: RawArchive, run, data: bytes, *, key: 
     session.flush()
 
 
+def is_483_record(record_type: str | None) -> bool:
+    """A Form 483 itself. The reading room also lists the firm's "483
+    Response", which quotes each observation before answering it and would
+    be read as FDA's findings, plus state referral and FMD-145 letters.
+    Records with no type are kept; segmentation finds no observations in
+    anything that is not a 483."""
+    if not record_type:
+        return True
+    return "483" in record_type and "response" not in record_type.lower()
+
+
 def entries_from_listing(cols: list[str], cells: list[list[str]], base_url: str) -> list[ReadingRoomEntry]:
     out = []
     for row in as_dicts(cols, cells):
         record_type = cell_text(row.get("Record Type", ""))
         url = cell_href(row.get("Record Type", ""), base_url) or cell_href(row.get("Company Name", ""), base_url)
-        if not url or (record_type and "483" not in record_type):
+        if not url or not is_483_record(record_type):
             continue
         out.append(ReadingRoomEntry(
             pdf_url=url, fei=cell_text(row.get("FEI Number", "")) or None,
@@ -199,10 +212,12 @@ def entries_from_listing(cols: list[str], cells: list[list[str]], base_url: str)
 
 def ingest_reading_room(session: Session, archive: RawArchive, fetcher: Fetcher, *,
                         listing_url: str | None = None, limit: int | None = None,
-                        max_rows: int | None = None) -> dict:
+                        max_rows: int | None = None, since: date | None = None) -> dict:
     """Page through the reading room listing (newest first) and archive every
     483 PDF not already stored. PDFs are keyed by URL; a re-published PDF at
-    the same URL with new bytes becomes a new version."""
+    the same URL with new bytes becomes a new version. ``since`` skips
+    records dated before it. Stored documents get their record type from the
+    listing without being downloaded again."""
     listing_url = listing_url or urljoin(fetcher.settings.fda_base_url, READING_ROOM_PATH)
     downloaded = 0
     with ingestion_run(session, "form_483") as run:
@@ -214,8 +229,13 @@ def ingest_reading_room(session: Session, archive: RawArchive, fetcher: Fetcher,
             tally(run, page.outcome)
             entries.extend(entries_from_listing(cols, cells, listing_url))
         for entry in entries:
+            if since and entry.record_date and entry.record_date < since:
+                continue
             key = f"483:{entry.pdf_url}"
-            if session.scalars(select(Document.id).where(Document.source_key == key)).first() is not None:
+            stored = session.scalars(select(Document).where(Document.source_key == key)).first()
+            if stored is not None:
+                if entry.record_type and (stored.meta or {}).get("record_type") != entry.record_type:
+                    stored.meta = {**(stored.meta or {}), "record_type": entry.record_type}
                 continue
             if limit is not None and downloaded >= limit:
                 break
@@ -227,6 +247,8 @@ def ingest_reading_room(session: Session, archive: RawArchive, fetcher: Fetcher,
                 _store_483(session, archive, run, data, key=key, url=entry.pdf_url, entry=entry)
             except Exception as exc:
                 record_error(run, entry.pdf_url, exc)
+            if downloaded and downloaded % 25 == 0:
+                session.commit()  # a long download resumes from here if interrupted
         return {"entries": len(entries), "downloaded": downloaded, "errors": run.n_errors}
 
 

@@ -7,6 +7,8 @@ nothing. Published counts only ever use tags with ``status="accepted"``.
 from __future__ import annotations
 
 import logging
+from datetime import date
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -61,6 +63,8 @@ def segment_document(session: Session, doc: Document) -> list[Observation]:
         doc.text_clean = clean_text(doc.text_raw)
 
     if doc.source == "form_483":
+        if "response" in str((doc.meta or {}).get("record_type", "")).lower():
+            return []  # the firm's reply quotes each observation; not FDA's findings
         kind, segments = "483", split_483(doc.text_clean)
         parent = session.scalars(select(Form483).where(Form483.document_id == doc.id)).first()
         links = dict(form_483_id=parent.id if parent else None,
@@ -273,9 +277,12 @@ def clear_segmentation(session: Session) -> int:
 
 
 def run_pipeline(session: Session, taxonomy: Taxonomy, *, tagger: LlmTagger | None = None,
-                 limit: int | None = None, llm_max: int | None = None, llm_workers: int = 1) -> dict:
+                 limit: int | None = None, llm_max: int | None = None, llm_workers: int = 1,
+                 llm_since: date | None = None) -> dict:
     """``limit`` caps documents; ``llm_max`` caps LLM calls (one per distinct
-    violation text); ``llm_workers`` sets how many calls run at once."""
+    violation text); ``llm_workers`` sets how many calls run at once;
+    ``llm_since`` sends only citations issued on or after that date to the
+    LLM (rules still tag everything)."""
     stats = {"documents": 0, "observations": 0, "citations": 0, "rule_tags": 0, "llm_tags": 0, "llm_errors": 0}
     docs = session.scalars(
         select(Document).where(Document.is_current.is_(True), Document.source.in_(["form_483", "warning_letter"]))
@@ -289,7 +296,8 @@ def run_pipeline(session: Session, taxonomy: Taxonomy, *, tagger: LlmTagger | No
             for citation in obs.citations:
                 stats["citations"] += 1
                 stats["rule_tags"] += rules_tag_citation(session, citation, taxonomy)
-                citations.append(citation)
+                if llm_since is None or (obs.observed_date is not None and obs.observed_date >= llm_since):
+                    citations.append(citation)
         session.flush()
     if tagger is not None:
         session.commit()

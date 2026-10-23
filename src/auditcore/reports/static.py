@@ -153,11 +153,13 @@ def _excerpt(text: str, evidence: str | None) -> tuple[str, bool, bool, list[lis
     return excerpt, start > 0, end < len(text), marks
 
 
-def build_report(session: Session, taxonomy: Taxonomy, out_dir: Path, *, samples: int = 3) -> dict[str, Path]:
+def build_report(session: Session, taxonomy: Taxonomy, out_dir: Path, *, samples: int = 3,
+                 since_year: int | None = None) -> dict[str, Path]:
     """Write report.html and citations.csv. ``samples`` is the number of
-    sample citations kept per failure mode and year."""
+    sample citations kept per failure mode and year; ``since_year`` drops
+    earlier years from the HTML (the CSV keeps every citation)."""
     rows = load_rows(session)
-    scope = [r for r in rows if r.in_scope]
+    scope = [r for r in rows if r.in_scope and (since_year is None or (r.observed and r.observed.year >= since_year))]
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / "citations.csv"
     export_csv(rows, csv_path)

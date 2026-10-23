@@ -89,3 +89,33 @@ def test_scope_covers_pre_reorganization_field_divisions():
     assert not letter_in_scope("Office of Inspections and Investigations", "CGMP/Dietary Supplement/Adulterated")
     assert in_scope("483", None, None, None)
     assert in_scope("wl", None, None, "211") and not in_scope("wl", None, None, "117")
+
+
+def test_483_record_types():
+    from auditcore.ingest.form483 import is_483_record
+
+    assert is_483_record("483") and is_483_record("") and is_483_record(None)
+    assert not is_483_record("483 Response") and not is_483_record("State Referral Letter")
+    assert not is_483_record("FMD-145 Letter")
+
+
+def test_483_response_documents_are_not_segmented(session):
+    from auditcore.models import Document
+    from auditcore.tagging.pipeline import segment_document
+
+    text = "OBSERVATION 1\\nAudit trails were not reviewed.\\nResponse: we have retrained staff."
+    resp = Document(source="form_483", source_key="483:r", content_hash="r", raw_path="x", media_type="application/pdf",
+                    text_raw=text, meta={"record_type": "483 Response"})
+    session.add(resp)
+    session.flush()
+    assert segment_document(session, resp) == []
+
+
+def test_report_since_year_drops_earlier_years(session, taxonomy, tmp_path):
+    aud = "Audit trails on the HPLC were not reviewed."
+    letter(session, taxonomy, 1, 2019, aud, [("CS-AUD-002", False)])
+    letter(session, taxonomy, 2, 2022, aud, [("CS-AUD-002", False)])
+    out = build_report(session, taxonomy, tmp_path, since_year=2021)
+    data = report_data(out["html"].read_text())
+    assert data["years"] == [2022] and [f[1] for f in data["f"]] == [2022]
+    assert len(out["csv"].read_text().splitlines()) == 3  # header plus both citations
