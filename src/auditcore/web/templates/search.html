@@ -15,6 +15,7 @@
       <option value="483" {% if params.kind == "483" %}selected{% endif %}>Form 483</option>
       <option value="wl" {% if params.kind == "wl" %}selected{% endif %}>Warning letter</option></select></label>
   <label>Facility type <input name="facility_type" value="{{ params.facility_type }}" size="12"></label>
+  <label><input type="checkbox" name="paper" value="1" {% if params.paper == "1" %}checked{% endif %}> Paper-only data-integrity findings</label>
   <button type="submit">Search</button>
 </form>
 <p class="muted small">{{ total }} citation{{ "" if total == 1 else "s" }}</p>
@@ -29,6 +30,7 @@
   </div>
   <div class="excerpt">{{ r.Citation.text[:900] }}{% if r.Citation.text|length > 900 %}...{% endif %}</div>
   {% for m in tags.get(r.Citation.id, []) %}<a class="tag" href="/modes/{{ m }}">{{ m }} {{ tax.modes[m].name }}</a>{% endfor %}
+  {% for m in paper_tags.get(r.Citation.id, []) %}<span class="tag paper" title="Paper records only. Not counted as a computerized-systems finding.">Paper only: {{ tax.modes[m].name }}</span>{% endfor %}
 </div>
 {% endfor %}
 {% if total > page * per %}

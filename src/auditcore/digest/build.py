@@ -42,7 +42,7 @@ def monthly_counts(session: Session, taxonomy_version: str, start: date, end: da
         .join(Citation, FailureMode.citation_id == Citation.id)
         .join(Observation, Citation.observation_id == Observation.id)
         .join(Document, Observation.document_id == Document.id)
-        .where(FailureMode.provenance == "human", FailureMode.status == "accepted",
+        .where(FailureMode.provenance == "human", FailureMode.status == "accepted", FailureMode.paper_only.is_(False),
                FailureMode.taxonomy_version == taxonomy_version, Document.is_current.is_(True),
                Observation.observed_date >= start, Observation.observed_date < end)
     ).all()
@@ -74,7 +74,7 @@ def deep_dive_candidates(session: Session, taxonomy_version: str, year: int, mon
         select(Citation.id, Citation.text, FailureMode.mode_id, Observation.kind)
         .join(Citation, FailureMode.citation_id == Citation.id)
         .join(Observation, Citation.observation_id == Observation.id)
-        .where(FailureMode.provenance == "human", FailureMode.status == "accepted",
+        .where(FailureMode.provenance == "human", FailureMode.status == "accepted", FailureMode.paper_only.is_(False),
                FailureMode.taxonomy_version == taxonomy_version,
                Observation.observed_date >= start, Observation.observed_date < end)
         .order_by(Observation.kind.desc(), Citation.id)

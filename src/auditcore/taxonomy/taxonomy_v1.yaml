@@ -14,12 +14,18 @@
 #               sentence, case-insensitive, after OCR cleanup. Every pattern is
 #               wrapped in word boundaries by the loader. Keep these strict;
 #               recall comes from the LLM stage.
+#   paper_records  true when the definition also fits findings about paper
+#               records only. Such findings are tagged with the paper_only flag:
+#               searchable, but out of computerized-systems counts. A finding
+#               is paper-only when no electronic or hybrid record is involved.
 #   examples    paraphrased observation patterns. STATUS: illustrative. Replace
 #               with paraphrases of real published citations during curation
 #               (never verbatim beyond fair use).
 
-version: "1.0"
+version: "1.1"
 effective: "2026-10-23"
+# 1.1: paper-only data-integrity findings (paper_records modes) carry the
+#      paper_only flag and are no longer computerized-systems findings.
 
 categories:
   SPR: Spreadsheets
@@ -409,6 +415,7 @@ modes:
 
   - id: CS-EDC-004
     category: EDC
+    paper_records: true
     name: Uncontrolled destruction of GMP records
     definition: GMP records (paper or electronic) were discarded, shredded, or deleted outside any controlled process.
     exclude: Deletion of raw instrument data (CS-LAB-003).
@@ -766,6 +773,7 @@ modes:
   # ---------------------------------------------------------------- Data integrity (ALCOA+)
   - id: CS-DI-001
     category: DI
+    paper_records: true
     name: Original records not preserved
     definition: Original (first-capture) records or true copies are not preserved; data are recorded on scrap paper, transcribed, or replaced.
     exclude: Raw instrument electronic data deleted (CS-LAB-003). Spreadsheet results overwritten (CS-SPR-005).
@@ -779,6 +787,7 @@ modes:
 
   - id: CS-DI-002
     category: DI
+    paper_records: true
     name: Data not recorded contemporaneously
     definition: Activities were recorded after the fact, in advance, or in batches rather than at the time of performance.
     exclude: Backdating with intent to falsify (CS-DI-005).
@@ -792,6 +801,7 @@ modes:
 
   - id: CS-DI-003
     category: DI
+    paper_records: true
     name: Unauthorized retesting
     definition: Samples were retested, or results replaced, without a documented investigation or authorization, until a passing result was obtained.
     exclude: Undocumented trial injections (CS-LAB-001).
@@ -805,6 +815,7 @@ modes:
 
   - id: CS-DI-004
     category: DI
+    paper_records: true
     name: Conflicting records for the same lot
     definition: Two or more records for the same lot, test, or activity contain conflicting data (for example, a batch record and electronic data disagree, or duplicate versions of a record exist).
     exclude: Records not contemporaneous with no conflict shown (CS-DI-002).
@@ -818,6 +829,7 @@ modes:
 
   - id: CS-DI-005
     category: DI
+    paper_records: true
     name: Data falsification or backdating
     definition: Records were fabricated, falsified, or backdated.
     exclude: Late recording without falsification (CS-DI-002).
@@ -832,6 +844,7 @@ modes:
 
   - id: CS-DI-006
     category: DI
+    paper_records: true
     name: Data not attributable
     definition: Records do not identify who performed or recorded an activity or change.
     exclude: Shared logins (CS-ACC-001), which is the most common cause; apply both if the citation states non-attributability.

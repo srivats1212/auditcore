@@ -48,6 +48,9 @@ class Row:
     in_scope: bool = True
     proposed: list[str] = field(default_factory=list)
     accepted: list[str] = field(default_factory=list)
+    # Paper-only data-integrity findings: listed, never counted as computerized systems.
+    proposed_paper: list[str] = field(default_factory=list)
+    accepted_paper: list[str] = field(default_factory=list)
 
 
 def _scope(kind: str, office: str | None, cfr_part: str | None) -> bool:
@@ -87,16 +90,22 @@ def load_rows(session: Session) -> list[Row]:
         )
     for r in rows.values():
         r.in_scope = _scope(r.kind, r.office, r.cfr_part)
-    for cid, mid, prov, status in session.execute(
-            select(FailureMode.citation_id, FailureMode.mode_id, FailureMode.provenance, FailureMode.status)
+    for cid, mid, prov, status, paper in session.execute(
+            select(FailureMode.citation_id, FailureMode.mode_id, FailureMode.provenance, FailureMode.status,
+                   FailureMode.paper_only)
             .where(FailureMode.mode_id != "NONE")):
         r = rows.get(cid)
         if r is None:
             continue
         if prov == "human" and status == "accepted":
-            r.accepted.append(mid)
-        elif prov in ("rules", "llm") and status != "rejected" and mid not in r.proposed:
-            r.proposed.append(mid)
+            (r.accepted_paper if paper else r.accepted).append(mid)
+        elif prov in ("rules", "llm") and status != "rejected":
+            target = r.proposed_paper if paper else r.proposed
+            if mid not in target:
+                target.append(mid)
+    for r in rows.values():
+        # Rules and LLM can disagree on the flag; until review, a computerized-systems reading wins.
+        r.proposed_paper = [m for m in r.proposed_paper if m not in r.proposed]
     return list(rows.values())
 
 
@@ -106,12 +115,14 @@ def export_csv(rows: list[Row], path: Path) -> int:
         w = csv.writer(fh)
         w.writerow(["citation_id", "observation_id", "document_type", "observation_number", "issue_date",
                     "facility", "fei", "establishment_type", "issuing_office", "subject", "in_scope",
-                    "cfr_cited", "proposed_modes_unreviewed", "accepted_modes", "source_url", "source_key", "text"])
+                    "cfr_cited", "proposed_modes_unreviewed", "accepted_modes", "paper_only_proposed",
+                    "paper_only_accepted", "source_url", "source_key", "text"])
         for r in rows:
             w.writerow([r.citation_id, r.observation_id, "Form 483" if r.kind == "483" else "Warning letter",
                         r.number, r.observed.isoformat() if r.observed else "", r.facility or "", r.fei or "",
                         r.establishment or "", r.office or "", r.subject or "", "yes" if r.in_scope else "no",
                         r.cfr or "", ";".join(sorted(r.proposed)), ";".join(sorted(r.accepted)),
+                        ";".join(sorted(r.proposed_paper)), ";".join(sorted(r.accepted_paper)),
                         r.source_url or "", r.source_key, r.text])
     return len(rows)
 
@@ -178,6 +189,7 @@ def build_report(session: Session, taxonomy: Taxonomy, out_dir: Path, *, samples
 
     use_accepted = any(r.accepted for r in scope)
     tags_of = (lambda r: r.accepted) if use_accepted else (lambda r: r.proposed)
+    paper_of = (lambda r: r.accepted_paper) if use_accepted else (lambda r: r.proposed_paper)
     basis = ("human-accepted tags" if use_accepted
              else "machine-proposed tags from the rules stage, not yet reviewed by a person")
 
@@ -272,6 +284,18 @@ Corpus: published warning letters and published Form 483s only; most 483s are ne
         html.append("<div class='card muted'>No failure-mode tags yet. Run <code>auditcore process</code>.</div>")
     html.append("<p class='note'>Failure-mode totals count each violation once; the CFR breakdown counts each section cited. "
                 "A violation is one numbered warning-letter violation or one numbered 483 observation.</p>")
+
+    paper_obs: dict[str, set[int]] = defaultdict(set)
+    for r in scope:
+        for m in paper_of(r):
+            paper_obs[m].add(r.observation_id)
+    if paper_obs:
+        listed = ", ".join(f"{escape(taxonomy.modes[m].name) if m in taxonomy.modes else m} ({len(v)})"
+                           for m, v in sorted(paper_obs.items(), key=lambda kv: (-len(kv[1]), kv[0])))
+        n_paper = len(set().union(*paper_obs.values()))
+        html.append(f"<p class='note'>{n_paper} violations with paper-only data-integrity findings are left out of "
+                    f"the counts above: {listed}. They involve no electronic or hybrid record. The CSV lists them "
+                    "under <code>paper_only_proposed</code> and <code>paper_only_accepted</code>.</p>")
 
     html.append(f"<h2>CFR breakdown</h2><p class='small muted'>Sections cited across all {len(scope)} in-scope citations, "
                 "whether or not a failure mode was tagged. Most 483 observations cite no section.</p>")

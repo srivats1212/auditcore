@@ -32,6 +32,9 @@ A citation gets a tag only when the citation text states a deficiency that match
 - Respect each mode's "Not this mode" note. When two modes fit, apply both only if the text supports each one independently.
 - Device-quality citations may use either QSR (pre February 2, 2026) or QMSR / ISO 13485 vocabulary. Map both to the same modes.
 - Matching words are not enough: "cloudy solution" is not cloud computing, "shared drive" is not a shared login.
+- Process validation, cleaning validation, utility or water-system qualification, and analytical method validation are not computerized-system validation. Tag a validation mode only when the thing not validated is software, a computerized system, or its configuration.
+- A 21 CFR 211.68 citation alone is not evidence of a computerized system. The heading quotes "automatic, mechanical, or electronic equipment" for calibration and equipment findings too; tag only what the finding itself describes.
+- Paper-only data integrity: modes marked "Paper records: yes" also fit findings about paper records. Set paper_only to true when the finding involves only paper records (handwritten forms, logbooks, worksheets, printouts from simple instruments that keep no electronic data). Set it to false when an electronic or hybrid record is involved (instrument data systems, audit trails, spreadsheets, LIMS, electronic batch records, printouts from systems that also store the data). For every other mode, paper_only is false.
 - Evidence must be copied verbatim from the citation text: the shortest span that shows the deficiency.
 - Confidence is your probability that a trained reviewer would accept the tag.
 - If no mode applies, return an empty list. Most citations in the corpus are not about computerized systems.
@@ -45,6 +48,8 @@ def taxonomy_block(taxonomy: Taxonomy) -> str:
         lines.append(f"  Definition: {mode.definition}")
         if mode.exclude:
             lines.append(f"  Not this mode: {mode.exclude}")
+        if mode.paper_records:
+            lines.append("  Paper records: yes")
     return "\n".join(lines)
 
 
@@ -60,8 +65,9 @@ def output_schema(taxonomy: Taxonomy) -> dict[str, Any]:
                         "mode_id": {"type": "string", "enum": sorted(taxonomy.modes)},
                         "evidence": {"type": "string"},
                         "confidence": {"type": "number"},
+                        "paper_only": {"type": "boolean"},
                     },
-                    "required": ["mode_id", "evidence", "confidence"],
+                    "required": ["mode_id", "evidence", "confidence", "paper_only"],
                     "additionalProperties": False,
                 },
             }
@@ -124,6 +130,26 @@ class LlmTag:
     mode_id: str
     evidence: str
     confidence: float
+    paper_only: bool = False
+
+
+# Where FDA's request list starts. Everything from here on is what FDA asks
+# the firm to provide, not what it cited. Only these unambiguous openers are
+# used: "In your response, you stated..." summaries can carry findings.
+_REQUEST_TAIL = re.compile(
+    r"(?:^|(?<=[.:;])\s+|\n)\s*(?:in response to this letter,?\s+(?:please\s+)?provide|"
+    r"in your response to this letter,?\s+(?:please\s+)?provide|your response should include)\b",
+    re.IGNORECASE,
+)
+
+
+def strip_request_tail(text: str) -> str:
+    """The citation text up to FDA's remediation request list. The stored
+    text keeps the full citation for search."""
+    m = _REQUEST_TAIL.search(text)
+    if m is None or not text[: m.start()].strip():
+        return text
+    return text[: m.start()].rstrip()
 
 
 class LlmRefusal(RuntimeError):
@@ -192,5 +218,6 @@ class LlmTagger:
                 continue
             seen.add(mode_id)
             conf = float(item.get("confidence", 0.0))
-            tags.append(LlmTag(mode_id, item["evidence"], min(max(conf, 0.0), 1.0)))
+            paper_only = bool(item.get("paper_only")) and self.taxonomy.modes[mode_id].paper_records
+            tags.append(LlmTag(mode_id, item["evidence"], min(max(conf, 0.0), 1.0), paper_only))
         return tags

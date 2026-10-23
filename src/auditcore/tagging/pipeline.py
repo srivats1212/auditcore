@@ -24,8 +24,8 @@ from ..taxonomy.loader import Taxonomy
 from ..text.cfr import CfrRef, regime_for
 from ..text.ocr_cleanup import clean_text
 from ..text.segment import split_483, split_citations, split_warning_letter
-from .llm import LlmRefusal, LlmTagger
-from .rules import tag_text
+from .llm import LlmRefusal, LlmTagger, strip_request_tail
+from .rules import has_electronic_cue, tag_text
 
 log = logging.getLogger(__name__)
 
@@ -102,11 +102,15 @@ def _has_tag(session: Session, citation_id: int, mode_id: str, provenance: str) 
 
 def rules_tag_citation(session: Session, citation: Citation, taxonomy: Taxonomy) -> int:
     added = 0
+    # Only the findings decide: FDA's request list mentions electronic records in most letters.
+    electronic = has_electronic_cue(strip_request_tail(citation.text))
     for hit in tag_text(citation.text, taxonomy):
         if _has_tag(session, citation.id, hit.mode_id, "rules"):
             continue
+        paper_only = taxonomy.modes[hit.mode_id].paper_records and not electronic
         session.add(FailureMode(citation_id=citation.id, mode_id=hit.mode_id, taxonomy_version=taxonomy.version,
-                                provenance="rules", confidence=RULE_CONFIDENCE, evidence=hit.evidence))
+                                provenance="rules", confidence=RULE_CONFIDENCE, evidence=hit.evidence,
+                                paper_only=paper_only))
         added += 1
     return added
 
@@ -119,10 +123,12 @@ def llm_tag_citation(session: Session, citation: Citation, tagger: LlmTagger) ->
         return 0
     obs = citation.observation
     cfr = citation.cfr_reference.canonical if citation.cfr_reference else None
-    tags = tagger.tag(citation.text, doc_kind=obs.kind, cfr=cfr)
+    # FDA's request list is not findings; leaving it out saves tokens and false positives.
+    tags = tagger.tag(strip_request_tail(citation.text), doc_kind=obs.kind, cfr=cfr)
     for t in tags:
         session.add(FailureMode(citation_id=citation.id, mode_id=t.mode_id, taxonomy_version=tagger.taxonomy.version,
-                                provenance="llm", confidence=t.confidence, evidence=t.evidence, model=tagger.model))
+                                provenance="llm", confidence=t.confidence, evidence=t.evidence, model=tagger.model,
+                                paper_only=t.paper_only))
     if not tags:
         # Record that the LLM looked and proposed nothing, so re-runs skip it.
         session.add(FailureMode(citation_id=citation.id, mode_id="NONE", taxonomy_version=tagger.taxonomy.version,

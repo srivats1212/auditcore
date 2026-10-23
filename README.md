@@ -120,6 +120,18 @@ auditcore serve
   each section cited (approved rule). A violation is one numbered
   warning-letter violation or 483 observation. A review decision applies to
   all sibling citations with the same text.
+- **Paper-only data integrity is not counted.** Modes marked `paper_records`
+  in the taxonomy (the six DI modes and record destruction, CS-EDC-004) also
+  fit findings about paper records. When a finding involves only paper
+  (handwritten forms, logbooks, printouts from simple instruments) the tag
+  carries `paper_only`: it stays reviewable and searchable (`/search?paper=1`,
+  CSV columns `paper_only_*`) but no count, trend, digest, gold evaluation or
+  report total includes it. The LLM sets the flag; rules set it when the
+  finding text has no electronic-record cue; the reviewer can override it
+  (`p` / `e` in `auditcore review`). Taxonomy 1.1.
+- **The LLM sees findings, not FDA's request list.** Text from "In response
+  to this letter, provide" onward is trimmed before tagging (about a quarter
+  of warning-letter citation text). The stored text keeps it for search.
 - **Cited sections come from the violation heading.** CFR sections mentioned
   later in the discussion, or boilerplate like "21 CFR parts 210 and 211", are
   not citations.
@@ -163,7 +175,8 @@ auditcore serve
 - **Image-only 483 PDFs** are flagged `needs_ocr` in `document.meta`; no OCR
   engine is wired in yet (Tesseract via `ocrmypdf` is the obvious choice).
 - **No migrations.** `auditcore init` uses `create_all`. Add Alembic before the
-  schema changes under real data.
+  schema changes under real data. A database created before taxonomy 1.1
+  needs `ALTER TABLE failure_mode ADD COLUMN paper_only BOOLEAN NOT NULL DEFAULT false`.
 - **Payments and email sending.** `/subscribe` stores an address;
   `digest publish` writes email-ready HTML. Billing and delivery are open
   decisions (PRD section 14).

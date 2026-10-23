@@ -67,6 +67,25 @@ _REMEDIATION_REQUEST = re.compile(
 )
 
 
+# Signs that a record is electronic or hybrid. Rules cannot tell paper from
+# electronic; a paper_records mode hit with none of these in the citation is
+# proposed as paper-only and the reviewer confirms it.
+_ELECTRONIC_CUE = re.compile(
+    r"\b(electronic\w*|computer\w*|software|audit[- ]trails?|data ?bases?|spreadsheets?|excel|lims|"
+    r"chromatograph\w*|hplc|uplc|gc|gc-?ms|lc-?ms|ftir|uv(-vis)?|icp(-ms)?|empower|chromeleon|openlab|"
+    r"data (acquisition|processing|management) system|chromatography data system|cds|"
+    r"metadata|raw data files?|data files?|servers?|network|workstations?|log-?ins?|passwords?|"
+    r"user (accounts?|names?|ids?|privileges)|admin\w*\s+(rights|privileges|access)|"
+    r"plc|scada|mes|erp|eqms|edms|ebrs?|electronic batch|e-?signatures?|digital\w*|"
+    r"back-?ups?|deleted|overwritten|files? (were|was) (deleted|modified|renamed))\b",
+    re.IGNORECASE,
+)
+
+
+def has_electronic_cue(text: str) -> bool:
+    return bool(_ELECTRONIC_CUE.search(text))
+
+
 @dataclass(frozen=True)
 class RuleHit:
     mode_id: str

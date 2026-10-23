@@ -127,6 +127,9 @@ def cmd_review(a):
             print("\n" + "=" * 78)
             print(f"[{n}/{len(items)}] citation {item.citation_id}  ->  {item.mode_id} {mode.name if mode else ''}")
             print(f"proposed by {item.sources}, confidence {item.best_confidence:.2f}")
+            paper_capable = bool(mode and mode.paper_records)
+            if paper_capable:
+                print(f"record type proposed: {'PAPER ONLY (not counted as computerized systems)' if item.paper_only else 'electronic or hybrid'}")
             if mode:
                 print(f"definition: {mode.definition}")
             for p in item.proposals:
@@ -134,14 +137,20 @@ def cmd_review(a):
                     print(f"  evidence ({p.provenance}): \"{p.evidence}\"")
             print("-" * 78)
             print(item.text[:2500])
+            prompt = "[a]ccept  [r]eject  [s]kip  [q]uit > "
+            valid = {"a", "r", "s", "q"}
+            if paper_capable:
+                prompt = "[a]ccept as proposed  [p]accept as paper only  [e]accept as electronic/hybrid  " + prompt[10:]
+                valid |= {"p", "e"}
             while True:
-                choice = input("[a]ccept  [r]eject  [s]kip  [q]uit > ").strip().lower()
-                if choice in ("a", "r", "s", "q"):
+                choice = input(prompt).strip().lower()
+                if choice in valid:
                     break
             if choice == "q":
                 break
-            if choice in ("a", "r"):
-                decide(s, item.citation_id, item.mode_id, accept=choice == "a", reviewer=reviewer)
+            if choice in ("a", "p", "e", "r"):
+                flag = {"p": True, "e": False}.get(choice)
+                decide(s, item.citation_id, item.mode_id, accept=choice != "r", reviewer=reviewer, paper_only=flag)
                 s.commit()
 
 

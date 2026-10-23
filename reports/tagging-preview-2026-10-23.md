@@ -139,6 +139,19 @@ records, results, entries, documents, logs or signatures.
   plates did not exist. Generic data-integrity language without a specific
   failure. Left untagged; the LLM is likely to tag it.
 
+## Status after the decisions (2026-10-23)
+
+- Decision 1: paper-only DI findings are not computerized-systems findings.
+  Taxonomy 1.1 marks the paper-capable modes and tags such findings
+  `paper_only` (searchable, never counted). On this corpus the rules flag 14
+  of 15 DI and record-destruction hits as paper-only; the Curia record
+  destruction (2) stays in because the finding also covers electronic
+  primary data.
+- Applied to the prompt: changes 1, 2, 3 and 5 below. The request-list trim
+  removes 24 percent of warning-letter citation text (275 of 668 citations
+  have one).
+- Still open: change 4 (passing mentions).
+
 ## Prompt changes to make before the first paid run
 
 1. Scope sentence matching decision 1 (for example: "Data-integrity modes apply

@@ -199,7 +199,8 @@ def adjudicate(session: Session, taxonomy: Taxonomy, *, a: str = "A", b: str = "
 def predictions(session: Session, pipeline: str, citation_ids: Iterable[int]) -> dict[int, set[str]]:
     ids = list(citation_ids)
     q = select(FailureMode.citation_id, FailureMode.mode_id).where(
-        FailureMode.citation_id.in_(ids), FailureMode.mode_id != "NONE"
+        FailureMode.citation_id.in_(ids), FailureMode.mode_id != "NONE",
+        FailureMode.paper_only.is_(False),  # gold labels are computerized-systems modes only
     )
     if pipeline == "rules":
         q = q.where(FailureMode.provenance == "rules")

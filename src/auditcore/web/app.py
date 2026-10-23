@@ -61,7 +61,7 @@ def create_app(*, database_url: str | None = None, content_dir: Path | str = "co
 
     @app.get("/search", response_class=HTMLResponse)
     def search(request: Request, q: str = "", mode: str = "", cfr: str = "", year: str = "", kind: str = "",
-               facility_type: str = "", page: int = 1, s: Session = Depends(db)):
+               facility_type: str = "", paper: str = "", page: int = 1, s: Session = Depends(db)):
         allowed = gate(s)
         query = (select(Citation, Observation, Document)
                  .join(Observation, Citation.observation_id == Observation.id)
@@ -77,7 +77,12 @@ def create_app(*, database_url: str | None = None, content_dir: Path | str = "co
             if mode not in allowed:
                 raise HTTPException(404, "This failure mode is in review and not yet published.")
             query = query.where(Citation.id.in_(select(FailureMode.citation_id).where(
-                FailureMode.mode_id == mode, FailureMode.provenance == "human", FailureMode.status == "accepted")))
+                FailureMode.mode_id == mode, FailureMode.provenance == "human", FailureMode.status == "accepted",
+                FailureMode.paper_only.is_(False))))
+        if paper == "1":
+            # Paper-only data-integrity findings: searchable, never counted as computerized systems.
+            query = query.where(Citation.id.in_(select(FailureMode.citation_id).where(
+                FailureMode.paper_only.is_(True), FailureMode.provenance == "human", FailureMode.status == "accepted")))
         if cfr:
             query = query.join(CfrReference, Citation.cfr_reference_id == CfrReference.id).where(
                 or_(CfrReference.section == cfr, CfrReference.canonical.ilike(f"%{cfr}%")))
@@ -95,13 +100,17 @@ def create_app(*, database_url: str | None = None, content_dir: Path | str = "co
                          .offset((max(page, 1) - 1) * per).limit(per)).all()
         ids = [r.Citation.id for r in rows]
         tags: dict[int, list[str]] = {}
+        paper_tags: dict[int, list[str]] = {}
         if ids:
-            for cid, mid in s.execute(select(FailureMode.citation_id, FailureMode.mode_id).where(
+            for cid, mid, is_paper in s.execute(select(FailureMode.citation_id, FailureMode.mode_id, FailureMode.paper_only).where(
                     FailureMode.citation_id.in_(ids), FailureMode.provenance == "human",
-                    FailureMode.status == "accepted", FailureMode.mode_id.in_(allowed or {""}))):
-                tags.setdefault(cid, []).append(mid)
-        return render(request, "search.html", rows=rows, tags=tags, total=total, page=page, per=per,
-                      params=dict(q=q, mode=mode, cfr=cfr, year=year, kind=kind, facility_type=facility_type),
+                    FailureMode.status == "accepted")):
+                if is_paper:
+                    paper_tags.setdefault(cid, []).append(mid)
+                elif mid in allowed:
+                    tags.setdefault(cid, []).append(mid)
+        return render(request, "search.html", rows=rows, tags=tags, paper_tags=paper_tags, total=total, page=page, per=per,
+                      params=dict(q=q, mode=mode, cfr=cfr, year=year, kind=kind, facility_type=facility_type, paper=paper),
                       allowed=sorted(allowed))
 
     @app.get("/modes", response_class=HTMLResponse)

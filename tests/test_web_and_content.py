@@ -205,3 +205,4 @@ def test_static_report_and_csv(session, archive, wl_html, taxonomy, tmp_path):
     assert {r["in_scope"] for r in rows} == {"yes", "no"}
     assert any("CS-ACC-001" in r["proposed_modes_unreviewed"] for r in rows)
     assert all(r["text"] for r in rows)
+    assert "paper_only_proposed" in rows[0] and "paper_only_accepted" in rows[0]

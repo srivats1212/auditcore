@@ -28,6 +28,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -241,6 +242,9 @@ class FailureMode(Base):
     confidence: Mapped[float | None] = mapped_column(Float)
     evidence: Mapped[str | None] = mapped_column(Text)  # quoted span supporting the tag
     status: Mapped[str] = mapped_column(String(16), default="proposed", index=True)  # proposed|accepted|rejected
+    # A data-integrity finding about paper records only. Kept so it stays
+    # searchable, but never counted as a computerized-systems finding.
+    paper_only: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), index=True)
     model: Mapped[str | None] = mapped_column(String(64))
     reviewer: Mapped[str | None] = mapped_column(String(64))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

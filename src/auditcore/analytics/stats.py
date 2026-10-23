@@ -6,6 +6,8 @@ Counting rules, stated on every published statistic:
   each section cited. A violation is one numbered warning-letter violation or
   one numbered 483 observation (an ``observation`` row);
 - only human-accepted tags count;
+- paper-only data-integrity tags (``paper_only``) never count; they stay
+  searchable but are not computerized-systems findings;
 - only current document versions count (superseded versions are excluded);
 - a citation is counted once per mode even if rules and LLM both proposed it;
 - year = calendar year of the 483 issue date or warning-letter issue date.
@@ -53,6 +55,7 @@ def _accepted_rows(session: Session, taxonomy_version: str):
         .where(
             FailureMode.provenance == "human",
             FailureMode.status == "accepted",
+            FailureMode.paper_only.is_(False),
             FailureMode.taxonomy_version == taxonomy_version,
             Document.is_current.is_(True),
             Observation.observed_date.is_not(None),
@@ -197,6 +200,6 @@ def methodology_note(session: Session, taxonomy_version: str, mode_ids: list[str
     return MethodologyNote(
         corpus="published FDA warning letters and published Form 483s only; most 483s are never published",
         date_range=(min(years) if years else None, max(years) if years else None),
-        counting="failure-mode totals count each violation once; the CFR breakdown counts each section cited; human-accepted tags only; current document versions",
+        counting="failure-mode totals count each violation once; the CFR breakdown counts each section cited; human-accepted tags only; paper-only data-integrity findings excluded; current document versions",
         evaluation=evals,
     )

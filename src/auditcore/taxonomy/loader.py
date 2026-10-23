@@ -26,6 +26,8 @@ class Mode:
     related: tuple[str, ...]
     rules: tuple[re.Pattern[str], ...]
     examples: tuple[str, ...]
+    # Definition also fits paper-only findings; those get the paper_only flag.
+    paper_records: bool = False
 
 
 @dataclass
@@ -72,6 +74,7 @@ def parse_taxonomy(raw: dict) -> Taxonomy:
             related=tuple(entry.get("related") or ()),
             rules=tuple(_compile(p, mode_id) for p in entry.get("rules") or ()),
             examples=tuple(entry.get("examples") or ()),
+            paper_records=bool(entry.get("paper_records", False)),
         )
     for mode in tax:
         for rel in mode.related:
