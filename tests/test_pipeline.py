@@ -291,3 +291,44 @@ def test_default_tagging_model_is_sonnet_5_5(monkeypatch):
     s = get_settings()
     assert (s.llm_model, s.llm_effort) == ("claude-sonnet-5-5", "medium")
     assert s.llm_model in PRICES and "claude-sonnet-5" in PRICES  # model and its fallback are priced
+
+
+def test_llm_tags_each_distinct_text_once_and_copies_to_siblings(session, taxonomy, fake_client_factory, fake_response):
+    from auditcore.models import CfrReference, Document
+    from auditcore.tagging.llm import LlmTagger
+    from auditcore.tagging.pipeline import llm_tag_citation
+
+    text = "Audit trails on the HPLC were not reviewed before release."
+    doc = Document(source="warning_letter", source_key="wl:sib", content_hash="hs", raw_path="x", media_type="text/html")
+    session.add(doc)
+    session.flush()
+    obs = Observation(document_id=doc.id, kind="wl", number=1, observed_date=date(2025, 5, 1), text=text)
+    other = Observation(document_id=doc.id, kind="wl", number=2, observed_date=date(2025, 5, 1), text="Other text.")
+    session.add_all([obs, other])
+    session.flush()
+    cits = []
+    for i, sec in enumerate(["211.68", "211.192"]):
+        ref = CfrReference(canonical=f"21 CFR {sec}", part="211", section=sec)
+        session.add(ref)
+        session.flush()
+        cits.append(Citation(observation_id=obs.id, ordinal=i, text=text, cfr_reference_id=ref.id))
+    cits.append(Citation(observation_id=other.id, ordinal=0, text="Other text."))
+    session.add_all(cits)
+    session.flush()
+
+    def responder(kw):
+        body = kw["messages"][0]["content"]
+        tags = [{"mode_id": "CS-AUD-002", "evidence": "Audit trails", "confidence": 0.9, "paper_only": False}] \
+            if "HPLC" in body else []
+        return fake_response(json.dumps({"tags": tags}))
+
+    client = fake_client_factory(responder)
+    tagger = LlmTagger(taxonomy, client=client)
+    for c in cits:
+        llm_tag_citation(session, c, tagger)
+    assert len(client.messages.calls) == 2  # one per distinct text
+    assert "CFR reference: 21 CFR 211.68; 21 CFR 211.192" in client.messages.calls[0]["messages"][0]["content"]
+    assert tags_of(session, cits[0].id, "llm") == tags_of(session, cits[1].id, "llm") == ["CS-AUD-002"]
+    copy = session.scalars(select(FailureMode).where(FailureMode.citation_id == cits[1].id)).one()
+    assert (copy.evidence, copy.confidence, copy.status) == ("Audit trails", 0.9, "proposed")
+    assert session.scalars(select(FailureMode.mode_id).where(FailureMode.citation_id == cits[2].id)).all() == ["NONE"]

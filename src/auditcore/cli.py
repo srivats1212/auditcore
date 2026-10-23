@@ -49,7 +49,9 @@ def cmd_init(a):
 def cmd_ingest_wl(a):
     from .ingest.warning_letters import ingest_index, ingest_listing
 
-    opts = dict(fetch_letters=not a.no_fetch, limit=a.limit, subject=a.subject, refetch=a.refetch)
+    since = date.fromisoformat(a.since) if a.since else None
+    opts = dict(fetch_letters=not a.no_fetch, limit=a.limit, subject=a.subject, refetch=a.refetch, since=since,
+                products_only=not a.include_food)
     with _session() as s:
         if a.xlsx:
             _print(ingest_index(s, _archive(), None if a.no_fetch else _fetcher(), Path(a.xlsx).read_bytes(), **opts))
@@ -368,6 +370,9 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--limit", type=int, help="fetch at most this many letters this run")
     x.add_argument("--refetch", action="store_true", help="re-fetch stored letters to detect revisions")
     x.add_argument("--no-fetch", action="store_true", help="index only, do not fetch letter pages")
+    x.add_argument("--since", help="only letters issued on or after this date, e.g. 2021-01-01")
+    x.add_argument("--include-food", action="store_true",
+                   help="also keep food and veterinary letters (dropped by default)")
     x.set_defaults(fn=cmd_ingest_wl)
     x = ing.add_parser("wl-files", help="saved letter HTML files named <CMS>.html")
     x.add_argument("paths", nargs="+")
@@ -461,7 +466,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     x = sub.add_parser("report", help="static HTML report and CSV export of the ingested corpus")
     x.add_argument("--out", default="reports")
-    x.add_argument("--samples", type=int, default=10)
+    x.add_argument("--samples", type=int, default=3, help="sample citations kept per failure mode and year")
     x.set_defaults(fn=cmd_report)
 
     x = sub.add_parser("serve", help="run the web UI")

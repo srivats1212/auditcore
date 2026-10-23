@@ -55,7 +55,8 @@ def test_rules_flag_paper_only_without_electronic_cue(session, taxonomy):
 def test_prompt_carries_the_preview_fixes(taxonomy):
     assert "analytical method validation are not computerized-system validation" in SYSTEM_PROMPT
     assert "211.68 citation alone is not evidence of a computerized system" in SYSTEM_PROMPT
-    assert "paper_only to true when the finding involves only paper records" in SYSTEM_PROMPT
+    assert "Set paper_only to false only when the citation text states that an electronic or hybrid record" in SYSTEM_PROMPT
+    assert "findings that do not say what kind of record is involved are all paper_only" in SYSTEM_PROMPT
     block = taxonomy_block(taxonomy)
     di = block.split("CS-DI-001 |")[1].split("\nCS-")[0]
     assert "Paper records: yes" in di and "Paper records: yes" not in block.split("CS-AUD-002 |")[1].split("\nCS-")[0]

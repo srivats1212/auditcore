@@ -175,6 +175,13 @@ class TestCopyLint:
         assert lint_paths(files) == []
 
 
+def report_data(html: str) -> dict:
+    import json as _json
+
+    raw = html.split('<script id="report-data" type="application/json">', 1)[1].split("</script>", 1)[0]
+    return _json.loads(raw)
+
+
 def test_static_report_and_csv(session, archive, wl_html, taxonomy, tmp_path):
     import csv as _csv
     from auditcore.ingest.warning_letters import ingest_letter_html
@@ -194,12 +201,16 @@ def test_static_report_and_csv(session, archive, wl_html, taxonomy, tmp_path):
 
     out = build_report(session, taxonomy, tmp_path / "rep", samples=3)
     html = out["html"].read_text()
-    assert "not yet reviewed by a person" in html                       # unreviewed basis is stated
-    assert "Shared logins" in html and "21 CFR 211.68" in html           # top modes and CFR breakdown
-    assert "Example Pharma Inc." in html and "https://example.test/wl" in html  # facility and source link
-    assert html.count('class="card"') == 3
-    assert "1 food and veterinary letters are excluded" in html
-    assert "—" not in html and "<script" not in html                 # house style; static, no JS
+    data = report_data(html)
+    assert not data["accepted"] and "a person has not yet reviewed" in html     # unreviewed basis is stated
+    assert "CS-ACC-001" in data["modes"] and data["modes"]["CS-ACC-001"][0] == "Shared logins"
+    assert data["years"] == [2025] and data["docs"]["2025"] == [1, 0]           # food letter not counted
+    assert any("211.68" in f[4] for f in data["f"])                            # CFR sections per finding
+    sample = data["samples"]["CS-ACC-001"][0]
+    assert sample["fac"] == "Example Pharma Inc." and sample["url"] == "https://example.test/wl"
+    assert data["excluded"] == 1
+    assert "\u2014" not in html and not find_em_dashes(html)                   # house style
+    assert 'id="years"' in html and "Per 100 documents" in html              # year filter, rate toggle
 
     rows = list(_csv.DictReader(out["csv"].open()))
     assert {r["in_scope"] for r in rows} == {"yes", "no"}

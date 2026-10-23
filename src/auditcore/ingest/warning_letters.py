@@ -25,6 +25,7 @@ from ..models import WarningLetter
 from ..text.ocr_cleanup import clean_text
 from .common import Fetcher, find_fei, get_or_create_facility, parse_date, pick
 from .fda_tables import as_dicts, cell_href, cell_text, iter_pages
+from .scope import letter_in_scope
 from .store import RawArchive, ingestion_run, record_error, store_document, tally
 
 log = logging.getLogger(__name__)
@@ -130,10 +131,18 @@ def _upsert_row(session: Session, row: IndexRow) -> WarningLetter:
 
 
 def _ingest_rows(session: Session, archive: RawArchive, fetcher: Fetcher | None, run, rows: list[IndexRow], *,
-                 fetch_letters: bool, limit: int | None, subject: str | None, refetch: bool) -> dict:
+                 fetch_letters: bool, limit: int | None, subject: str | None, refetch: bool,
+                 since: date | None = None, products_only: bool = True) -> dict:
+    """``since`` keeps letters issued on or after that date; ``products_only``
+    keeps drug, biologic and device letters and drops food and veterinary
+    ones (see ``scope``)."""
     fetched = kept = 0
     for row in rows:
         if subject and subject.lower() not in (row.subject or "").lower():
+            continue
+        if since and (row.issue_date or row.posted_date or since) < since:
+            continue
+        if products_only and not letter_in_scope(row.issuing_office, row.subject):
             continue
         if not row.cms_number:
             record_error(run, row.company_name or "?", "no CMS number in index row")
@@ -152,12 +161,16 @@ def _ingest_rows(session: Session, archive: RawArchive, fetcher: Fetcher | None,
             ingest_letter_html(session, archive, wl, resp.content, url=row.letter_url, run=run)
         except Exception as exc:  # one bad letter must not stop the run
             record_error(run, f"wl:{row.cms_number}", exc)
+        if fetched and fetched % 25 == 0:
+            session.commit()  # a long backfill resumes from here if interrupted
+            log.info("fetched %d letters", fetched)
     return {"rows": len(rows), "matched": kept, "fetched": fetched, "errors": run.n_errors}
 
 
 def ingest_index(session: Session, archive: RawArchive, fetcher: Fetcher | None, xlsx: bytes, *,
                  source_url: str | None = None, fetch_letters: bool = True, limit: int | None = None,
-                 subject: str | None = None, refetch: bool = False) -> dict:
+                 subject: str | None = None, refetch: bool = False, since: date | None = None,
+                 products_only: bool = True) -> dict:
     """Offline path from an XLSX index that carries letter links. FDA's own
     export does not, so ``ingest_listing`` is the normal path."""
     with ingestion_run(session, "warning_letters") as run:
@@ -165,7 +178,7 @@ def ingest_index(session: Session, archive: RawArchive, fetcher: Fetcher | None,
                              media_type=XLSX, source_url=source_url, run=run)
         tally(run, idx.outcome)
         return _ingest_rows(session, archive, fetcher, run, parse_index_xlsx(xlsx), fetch_letters=fetch_letters,
-                            limit=limit, subject=subject, refetch=refetch)
+                            limit=limit, subject=subject, refetch=refetch, since=since, products_only=products_only)
 
 
 def rows_from_listing(cols: list[str], cells: list[list[str]], base_url: str) -> list[IndexRow]:
@@ -186,7 +199,7 @@ def rows_from_listing(cols: list[str], cells: list[list[str]], base_url: str) ->
 
 def ingest_listing(session: Session, archive: RawArchive, fetcher: Fetcher, *, fetch_letters: bool = True,
                    limit: int | None = None, max_rows: int | None = None, subject: str | None = None,
-                   refetch: bool = False) -> dict:
+                   refetch: bool = False, since: date | None = None, products_only: bool = True) -> dict:
     """Page through the Warning Letters listing (newest first), archive each
     listing page, then fetch letters."""
     page_url = urljoin(fetcher.settings.fda_base_url, WL_LIST_PATH)
@@ -199,7 +212,7 @@ def ingest_listing(session: Session, archive: RawArchive, fetcher: Fetcher, *, f
             tally(run, page.outcome)
             rows.extend(rows_from_listing(cols, cells, page_url))
         out = _ingest_rows(session, archive, fetcher, run, rows, fetch_letters=fetch_letters, limit=limit,
-                           subject=subject, refetch=refetch)
+                           subject=subject, refetch=refetch, since=since, products_only=products_only)
         totals.update(out)
     return totals
 

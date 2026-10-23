@@ -116,13 +116,35 @@ def rules_tag_citation(session: Session, citation: Citation, taxonomy: Taxonomy)
 
 
 def llm_tag_citation(session: Session, citation: Citation, tagger: LlmTagger) -> int:
+    """Propose LLM tags for one citation. Sibling citations (same observation,
+    same text, one per cited CFR section) share one model call: the first is
+    sent with every section the violation cites, and later siblings copy its
+    proposals instead of calling again."""
     already = session.scalars(
         select(FailureMode.id).where(FailureMode.citation_id == citation.id, FailureMode.provenance == "llm")
     ).first()
     if already is not None:
         return 0
     obs = citation.observation
-    cfr = citation.cfr_reference.canonical if citation.cfr_reference else None
+    siblings = [c for c in obs.citations if c.text == citation.text]
+    done = session.scalars(select(FailureMode).where(
+        FailureMode.citation_id.in_([c.id for c in siblings if c.id != citation.id]),
+        FailureMode.provenance == "llm")).all()
+    if done:
+        source = min(f.citation_id for f in done)
+        copied = 0
+        for f in done:
+            if f.citation_id != source:
+                continue
+            session.add(FailureMode(citation_id=citation.id, mode_id=f.mode_id, taxonomy_version=f.taxonomy_version,
+                                    provenance="llm", confidence=f.confidence, evidence=f.evidence, model=f.model,
+                                    paper_only=f.paper_only, status=f.status if f.mode_id == "NONE" else "proposed",
+                                    reviewer=f.reviewer if f.mode_id == "NONE" else None,
+                                    reviewed_at=f.reviewed_at if f.mode_id == "NONE" else None))
+            copied += f.mode_id != "NONE"
+        return copied
+    cfrs = [c.cfr_reference.canonical for c in sorted(siblings, key=lambda c: c.ordinal) if c.cfr_reference]
+    cfr = "; ".join(dict.fromkeys(cfrs)) or None
     # FDA's request list is not findings; leaving it out saves tokens and false positives.
     tags = tagger.tag(strip_request_tail(citation.text), doc_kind=obs.kind, cfr=cfr)
     for t in tags:
@@ -134,6 +156,7 @@ def llm_tag_citation(session: Session, citation: Citation, tagger: LlmTagger) ->
         session.add(FailureMode(citation_id=citation.id, mode_id="NONE", taxonomy_version=tagger.taxonomy.version,
                                 provenance="llm", confidence=None, status="rejected", model=tagger.model,
                                 reviewer="system", reviewed_at=utcnow()))
+    session.flush()
     return len(tags)
 
 
@@ -193,6 +216,8 @@ def run_pipeline(session: Session, taxonomy: Taxonomy, *, tagger: LlmTagger | No
                         else:
                             raise
         session.flush()
+        if tagger is not None:
+            session.commit()  # paid proposals survive an interrupted run
     if tagger is not None:
         stats["llm_usage"] = tagger.usage.as_dict()
     return stats

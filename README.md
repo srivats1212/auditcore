@@ -39,12 +39,35 @@ auditcore init
 pytest
 ```
 
+## Running locally with SQLite
+
+Postgres is the production target, but a single SQLite file is enough on
+one machine. Everything the app knows lives in two places:
+
+- the database (`AUDITCORE_DATABASE_URL`): documents and their text,
+  violations, citations, every proposed and reviewed tag, the review audit
+  trail, gold labels and statistics;
+- the raw archive (`AUDITCORE_ARCHIVE_DIR`): every downloaded letter page,
+  listing page and 483 PDF, named by SHA-256 and never overwritten.
+
+```sh
+export AUDITCORE_DATABASE_URL=sqlite:///$PWD/data/auditcore.sqlite3
+export AUDITCORE_ARCHIVE_DIR=$PWD/data/archive
+export ANTHROPIC_API_KEY=...   # only for process --llm
+auditcore init
+```
+
+`data/` is gitignored. Back up the database file before and during review:
+the decisions are the part you cannot regenerate. Keep the archive too:
+483 PDFs disappear from FDA's reading room after a while. Copy the file
+only while no `auditcore` command is running.
+
 ## Workflow
 
 ```sh
 # 1. Ingest (every run is idempotent and logged in ingestion_run)
 auditcore ingest dashboard --product-type Drugs     # inspections, compliance actions
-auditcore ingest wl --subject CGMP                  # Warning Letters listing (all pages), then each new letter
+auditcore ingest wl --subject CGMP --since 2021-01-01   # drug, biologic and device letters only (food and vet dropped)
 auditcore ingest 483                                # OII reading room listing; archives every new PDF on sight
 auditcore ingest 483-files pdfs/*.pdf --manifest manifest.csv   # PDFs saved by hand
 auditcore ingest runs
@@ -132,8 +155,9 @@ auditcore serve
   (handwritten forms, logbooks, printouts from simple instruments) the tag
   carries `paper_only`: it stays reviewable and searchable (`/search?paper=1`,
   CSV columns `paper_only_*`) but no count, trend, digest, gold evaluation or
-  report total includes it. The LLM sets the flag; rules set it when the
-  finding text has no electronic-record cue; the reviewer can override it
+  report total includes it. Both stages assume paper unless an electronic
+  or hybrid record is stated: the LLM is told so, and rules set the flag when
+  the finding text has no electronic-record cue. The reviewer can override it
   (`p` / `e` in `auditcore review` or on the review page). Taxonomy 1.1.
 - **Review decisions are reversible and audited.** `auditcore review --amend`
   and the Decided list on the review page change an earlier decision: accept
@@ -143,8 +167,8 @@ auditcore serve
   reason); `auditcore review-log` prints it. Repeating the current decision is
   a no-op and is not logged. A new machine proposal on a decided tag puts it
   back in the queue.
-- **The review page is local only.** `auditcore serve --review --reviewer
-  <you>` adds `/review` to the web app: the queue with citation text and
+- **The review page is local only.**
+  `auditcore serve --review --reviewer <you>` adds `/review` to the web app: the queue with citation text and
   highlighted evidence spans, mode definition, confidence, proposer, proposed
   and current paper/electronic flag; buttons and the CLI keys (`a` `p` `e`
   `r` `s`, plus `j`/`k` to move and `c` to open Change decision); filters by
@@ -173,7 +197,27 @@ auditcore serve
   `AUDITCORE_LLM_MODEL` / `AUDITCORE_LLM_EFFORT`) with JSON-schema output
   constrained to taxonomy IDs, the taxonomy as a cached system-prompt prefix,
   and server-side refusal fallback enabled. A proposed tag is dropped unless
-  its evidence quote appears in the citation text.
+  its evidence quote appears in the citation text. Each distinct violation
+  text is sent once, with every CFR section it cites; sibling citations copy
+  its proposals. Progress is committed after each document, so an
+  interrupted paid run keeps what it already bought.
+- **Scope is by product area, not by office name.** Before FDA's October
+  2024 reorganization most domestic drug and device letters came from ORA
+  field divisions ("Division of Pharmaceutical Quality Operations IV"), not
+  from CDER or CDRH. `ingest/scope.py` keeps the centers and their field
+  divisions, drops food and veterinary offices, and falls back to the
+  subject line for offices that cover several product areas (OII, imports).
+  Ingest and the report use the same rule. The Warning Letters listing on
+  fda.gov starts in January 2021, so `--since 2021-01-01` takes everything
+  it offers.
+- **The report is one offline HTML file.** `auditcore report` writes
+  `report.html` with its data embedded as JSON and drawn by inline script:
+  findings per year (count or per 100 documents), a failure-mode by year
+  table with trend sparklines, categories, a card per mode with a year
+  chart, CFR sections and sample citations (facility, date, source link,
+  evidence highlighted), and the method. Filters: year, document type,
+  measure. It uses accepted tags once any exist, else unreviewed proposals,
+  and says which.
 
 ## Not done yet
 
