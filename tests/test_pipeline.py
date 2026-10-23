@@ -194,7 +194,8 @@ class TestGoldAndAnalytics:
         assert mode_trend(session, "CS-AUD-002", taxonomy.version) == {2025: {"483": 0, "wl": 1}}
         assert mode_trend(session, "CS-AUD-001", taxonomy.version) == {2024: {"483": 1, "wl": 0}}
         note = methodology_note(session, taxonomy.version, ["CS-AUD-002"]).render()
-        assert "citations, not documents" in note and "precision 1.00" in note
+        assert "failure-mode totals count each violation once; the CFR breakdown counts each section cited" in note
+        assert "precision 1.00" in note
 
     def test_escalation(self, session, loaded, taxonomy):
         self._accept_all_rule_tags(session)
@@ -204,3 +205,64 @@ class TestGoldAndAnalytics:
         rates = escalation_rates(session, taxonomy.version)
         assert rates["CS-AUD-001"] == {"facilities_483": 1, "escalated": 1, "rate": 1.0}
         assert rates["CS-VAL-001"]["escalated"] == 0
+
+
+def test_counting_rule_violation_once_sections_each(session, taxonomy):
+    """Approved rule: failure-mode totals count each violation once; the CFR
+    breakdown counts each section cited."""
+    from auditcore.analytics.stats import cfr_breakdown
+    from auditcore.models import CfrReference, Document
+
+    doc = Document(source="warning_letter", source_key="wl:9", content_hash="h", raw_path="x", media_type="text/html")
+    session.add(doc)
+    session.flush()
+    obs = Observation(document_id=doc.id, kind="wl", number=1, observed_date=date(2025, 5, 1),
+                      text="Your firm failed to control computer systems (21 CFR 211.68(b), 211.100(a), and 211.192).")
+    session.add(obs)
+    session.flush()
+    for i, sec in enumerate(["211.68", "211.100", "211.192"]):
+        ref = CfrReference(canonical=f"21 CFR {sec}", part="211", section=sec)
+        session.add(ref)
+        session.flush()
+        cit = Citation(observation_id=obs.id, ordinal=i, text=obs.text, cfr_reference_id=ref.id)
+        session.add(cit)
+        session.flush()
+        session.add(FailureMode(citation_id=cit.id, mode_id="CS-ACC-002", taxonomy_version=taxonomy.version,
+                                provenance="rules", confidence=0.9))
+    session.flush()
+    first = session.scalars(select(Citation).where(Citation.observation_id == obs.id)).first()
+    decide(session, first.id, "CS-ACC-002", accept=True, reviewer="sk")  # one decision covers all three
+
+    compute_annual_stats(session, taxonomy.version)
+    assert mode_trend(session, "CS-ACC-002", taxonomy.version) == {2025: {"483": 0, "wl": 1}}
+    assert sorted(cfr_breakdown(session, "CS-ACC-002", taxonomy.version)) == [("211.100", 1), ("211.192", 1), ("211.68", 1)]
+
+
+def test_usage_and_cost_accounting(taxonomy, fake_client_factory, fake_response):
+    from types import SimpleNamespace
+
+    def responder(kw):
+        r = fake_response(json.dumps({"tags": []}))
+        first = not responder.seen
+        responder.seen = True
+        r.model = "claude-opus-5-5"
+        r.usage = SimpleNamespace(input_tokens=300, output_tokens=200,
+                                  cache_creation_input_tokens=5000 if first else 0,
+                                  cache_read_input_tokens=0 if first else 5000)
+        return r
+    responder.seen = False
+
+    tagger = LlmTagger(taxonomy, client=fake_client_factory(responder))
+    for _ in range(3):
+        tagger.tag("Audit trails were not reviewed.", doc_kind="wl", cfr=None)
+    u = tagger.usage.as_dict()
+    assert u["calls"] == 3 and u["cache_write_tokens"] == 5000 and u["cache_read_tokens"] == 10000
+    # 900 in x $4 + 600 out x $20 + 5000 write x $5 + 10000 read x $0.20, per million
+    assert u["cost_usd"] == round((900 * 4 + 600 * 20 + 5000 * 5 + 10000 * 0.2) / 1e6, 4)
+    assert u["models"] == {"claude-opus-5-5": 3}
+
+
+def test_llm_max_caps_calls(session, loaded, taxonomy, fake_client_factory, fake_response):
+    client = fake_client_factory(lambda kw: fake_response(json.dumps({"tags": []})))
+    stats = run_pipeline(session, taxonomy, tagger=LlmTagger(taxonomy, client=client), llm_max=2)
+    assert len(client.messages.calls) == 2 and stats["llm_usage"]["calls"] == 2

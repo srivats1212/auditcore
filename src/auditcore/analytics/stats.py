@@ -2,9 +2,9 @@
 
 Counting rules, stated on every published statistic:
 - the unit is the citation, not the document;
-- a failure-mode total counts each observation once: an observation citing
-  five CFR sections is five citations but one finding of that mode. The CFR
-  breakdown counts citations (one per cited section);
+- failure-mode totals count each violation once; the CFR breakdown counts
+  each section cited. A violation is one numbered warning-letter violation or
+  one numbered 483 observation (an ``observation`` row);
 - only human-accepted tags count;
 - only current document versions count (superseded versions are excluded);
 - a citation is counted once per mode even if rules and LLM both proposed it;
@@ -197,6 +197,6 @@ def methodology_note(session: Session, taxonomy_version: str, mode_ids: list[str
     return MethodologyNote(
         corpus="published FDA warning letters and published Form 483s only; most 483s are never published",
         date_range=(min(years) if years else None, max(years) if years else None),
-        counting="citations, not documents; a failure-mode total counts each observation once; human-accepted tags only; current document versions",
+        counting="failure-mode totals count each violation once; the CFR breakdown counts each section cited; human-accepted tags only; current document versions",
         evaluation=evals,
     )

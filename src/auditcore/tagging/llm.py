@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..config import get_settings
@@ -71,6 +71,51 @@ def output_schema(taxonomy: Taxonomy) -> dict[str, Any]:
     }
 
 
+# USD per million tokens: input, output, cache read, 5-minute cache write.
+# Fallback models are listed because a refusal fallback bills at their rates.
+PRICES: dict[str, tuple[float, float, float, float]] = {
+    "claude-opus-5-5": (4.00, 20.00, 0.20, 5.00),
+    "claude-opus-5": (5.00, 25.00, 0.50, 6.25),
+    "claude-opus-4-8": (5.00, 25.00, 0.50, 6.25),
+}
+
+
+@dataclass
+class Usage:
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    cost_usd: float = 0.0
+    unpriced_calls: int = 0
+    models: dict[str, int] = field(default_factory=dict)
+
+    def add(self, model: str, usage: Any) -> None:
+        get = lambda k: int(getattr(usage, k, 0) or 0)  # noqa: E731
+        inp, out = get("input_tokens"), get("output_tokens")
+        cr, cw = get("cache_read_input_tokens"), get("cache_creation_input_tokens")
+        self.calls += 1
+        self.input_tokens += inp
+        self.output_tokens += out
+        self.cache_read_tokens += cr
+        self.cache_write_tokens += cw
+        self.models[model] = self.models.get(model, 0) + 1
+        price = PRICES.get(model)
+        if price is None:
+            self.unpriced_calls += 1
+            return
+        p_in, p_out, p_cr, p_cw = price
+        self.cost_usd += (inp * p_in + out * p_out + cr * p_cr + cw * p_cw) / 1_000_000
+
+    def as_dict(self) -> dict:
+        per = self.cost_usd / self.calls if self.calls else 0.0
+        return {"calls": self.calls, "input_tokens": self.input_tokens, "output_tokens": self.output_tokens,
+                "cache_read_tokens": self.cache_read_tokens, "cache_write_tokens": self.cache_write_tokens,
+                "cost_usd": round(self.cost_usd, 4), "cost_per_citation_usd": round(per, 5),
+                "models": self.models, "unpriced_calls": self.unpriced_calls}
+
+
 @dataclass(frozen=True)
 class LlmTag:
     mode_id: str
@@ -107,6 +152,7 @@ class LlmTagger:
             {"type": "text", "text": taxonomy_block(taxonomy), "cache_control": {"type": "ephemeral"}},
         ]
         self._schema = output_schema(taxonomy)
+        self.usage = Usage()
 
     def tag(self, citation_text: str, *, doc_kind: str, cfr: str | None) -> list[LlmTag]:
         prompt = (
@@ -123,6 +169,8 @@ class LlmTagger:
             output_config={"effort": self.effort, "format": {"type": "json_schema", "schema": self._schema}},
             messages=[{"role": "user", "content": prompt}],
         )
+        # Price by the model that served the request: a refusal fallback may switch it.
+        self.usage.add(getattr(response, "model", None) or self.model, getattr(response, "usage", None))
         if response.stop_reason == "refusal":
             raise LlmRefusal(f"model declined: {getattr(response, 'stop_details', None)}")
         if response.stop_reason == "max_tokens":

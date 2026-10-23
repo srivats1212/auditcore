@@ -135,8 +135,9 @@ def draft_issue(session: Session, taxonomy: Taxonomy, year: int, month: int, *, 
     else:
         lines.append(f"{PLACEHOLDER} pick a published remediation pattern to spotlight.]")
     lines += ["", "## Methodology", "",
-              "Counts are citations in published warning letters and published Form 483s, tagged at citation level "
-              "and reviewed by a person. Most 483s are never published. Only failure modes that meet the "
+              "Counts come from published warning letters and published Form 483s, tagged at citation level "
+              "and reviewed by a person. Failure-mode totals count each violation once; the CFR breakdown "
+              "counts each section cited. Most 483s are never published. Only failure modes that meet the "
               f"{get_settings().precision_bar:.2f} precision bar on our gold set appear. Full method: /methodology.", ""]
 
     out_dir.mkdir(parents=True, exist_ok=True)

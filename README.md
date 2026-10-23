@@ -51,7 +51,7 @@ auditcore ingest runs
 
 # 2. Segment and propose tags
 auditcore process            # rules only
-auditcore process --llm      # rules + Claude proposals with verbatim evidence spans
+auditcore process --llm --llm-max 20   # rules + Claude proposals; reports tokens, cost, cost per citation
 
 # 3. Human review: nothing is counted until accepted here
 auditcore review --reviewer <you>
@@ -115,9 +115,10 @@ auditcore serve
   `AUDITCORE_PRECISION_BAR` (0.85) with at least 3 gold positives. Everything
   else shows as "in review".
 - **Counting.** Only human-accepted tags on current document versions count.
-  A failure-mode total counts each observation once; a violation citing three
-  CFR sections is three citations in the CFR breakdown but one finding. A
-  review decision applies to all sibling citations with the same text.
+  Failure-mode totals count each violation once; the CFR breakdown counts
+  each section cited (approved rule). A violation is one numbered
+  warning-letter violation or 483 observation. A review decision applies to
+  all sibling citations with the same text.
 - **Cited sections come from the violation heading.** CFR sections mentioned
   later in the discussion, or boilerplate like "21 CFR parts 210 and 211", are
   not citations.

@@ -104,7 +104,7 @@ def cmd_process(a):
     tax = load_taxonomy()
     with _session() as s:
         sync_taxonomy(s, tax)
-        _print(run_pipeline(s, tax, tagger=LlmTagger(tax) if a.llm else None, limit=a.limit))
+        _print(run_pipeline(s, tax, tagger=LlmTagger(tax) if a.llm else None, limit=a.limit, llm_max=a.llm_max))
 
 
 def cmd_review(a):
@@ -319,7 +319,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     x = sub.add_parser("process", help="segment documents and propose tags")
     x.add_argument("--llm", action="store_true", help="also run LLM tagging (needs Anthropic credentials)")
-    x.add_argument("--limit", type=int)
+    x.add_argument("--limit", type=int, help="process at most this many documents")
+    x.add_argument("--llm-max", type=int, help="make at most this many LLM calls (one per citation)")
     x.set_defaults(fn=cmd_process)
 
     x = sub.add_parser("review", help="interactive human review of proposed tags")

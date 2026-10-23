@@ -14,7 +14,7 @@
   {% endfor %}
   </tbody>
 </table>
-<p class="note">Counts are citations, not documents. Only failure modes that meet the precision bar on the gold set are shown ({{ n_live }} of {{ tax|length }} today). <a href="/methodology">Methodology</a>.</p>
+<p class="note">Failure-mode totals count each violation once; the CFR breakdown counts each section cited. Only failure modes that meet the precision bar on the gold set are shown ({{ n_live }} of {{ tax|length }} today). <a href="/methodology">Methodology</a>.</p>
 {% else %}
 <div class="card muted">No failure mode has cleared the evaluation bar yet. Trends appear here once a mode is scored on the gold set at or above the precision bar.</div>
 {% endif %}

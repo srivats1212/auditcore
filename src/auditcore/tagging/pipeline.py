@@ -132,7 +132,8 @@ def llm_tag_citation(session: Session, citation: Citation, tagger: LlmTagger) ->
 
 
 def run_pipeline(session: Session, taxonomy: Taxonomy, *, tagger: LlmTagger | None = None,
-                 limit: int | None = None) -> dict[str, int]:
+                 limit: int | None = None, llm_max: int | None = None) -> dict:
+    """``limit`` caps documents; ``llm_max`` caps LLM calls (one per citation)."""
     stats = {"documents": 0, "observations": 0, "citations": 0, "rule_tags": 0, "llm_tags": 0, "llm_errors": 0}
     docs = session.scalars(
         select(Document).where(Document.is_current.is_(True), Document.source.in_(["form_483", "warning_letter"]))
@@ -145,11 +146,21 @@ def run_pipeline(session: Session, taxonomy: Taxonomy, *, tagger: LlmTagger | No
             for citation in obs.citations:
                 stats["citations"] += 1
                 stats["rule_tags"] += rules_tag_citation(session, citation, taxonomy)
-                if tagger is not None:
+                if tagger is not None and (llm_max is None or tagger.usage.calls < llm_max):
                     try:
                         stats["llm_tags"] += llm_tag_citation(session, citation, tagger)
                     except (LlmRefusal, RuntimeError, ValueError) as exc:
                         stats["llm_errors"] += 1
                         log.warning("LLM tagging failed for citation %s: %s", citation.id, exc)
+                    except Exception as exc:
+                        # Rate limits and overloads (after the SDK's own retries) skip this
+                        # citation; it is retried next run. Auth and request errors abort.
+                        if getattr(exc, "status_code", None) in (408, 409, 429, 500, 502, 503, 504, 529):
+                            stats["llm_errors"] += 1
+                            log.warning("LLM call failed for citation %s, will retry next run: %s", citation.id, exc)
+                        else:
+                            raise
         session.flush()
+    if tagger is not None:
+        stats["llm_usage"] = tagger.usage.as_dict()
     return stats
