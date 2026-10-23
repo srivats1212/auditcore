@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}{{ meta.title }}{% endblock %}
+{% block body %}
+<p class="small muted"><a href="/digest">Digest</a> &middot; {{ meta.issue }}</p>
+<h1>{{ meta.title }}</h1>
+{{ html }}
+{% endblock %}

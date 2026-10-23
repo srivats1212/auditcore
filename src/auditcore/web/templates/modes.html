@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Failure modes{% endblock %}
+{% block body %}
+<h1>Failure-mode taxonomy v{{ tax.version }}</h1>
+<p class="muted">{{ tax|length }} computerized-systems failure modes with stable IDs. A mode shows trends only after it clears the precision bar on the gold set.</p>
+{% for code, label in tax.categories.items() %}
+<h2>{{ label }}</h2>
+<table><tbody>
+{% for m in tax if m.category == code %}
+<tr>
+  <td style="width:8.5em" class="small muted">{{ m.id }}</td>
+  <td><a href="/modes/{{ m.id }}">{{ m.name }}</a></td>
+  <td class="num">{% if m.id in allowed %}<span class="pill">live</span>{% else %}<span class="pill">in review</span>{% endif %}
+      {% if m.id in patterns %}<span class="pill">remediation</span>{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody></table>
+{% endfor %}
+{% endblock %}

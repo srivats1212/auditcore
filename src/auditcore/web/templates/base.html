@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Computerized-Systems Enforcement Intelligence{% endblock %}</title>
+<style>
+:root {
+  --surface-0: #f6f5f2; --surface-1: #fcfcfb; --border: #dedcd6;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #77756f;
+  --accent: #1c5cab; --series-1: #2a78d6; --series-2: #eb6834; --grid: #e6e4de;
+  --tag-bg: #e8f0fb;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface-0: #121211; --surface-1: #1a1a19; --border: #33332f;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --accent: #86b6ef; --series-1: #3987e5; --series-2: #d95926; --grid: #2a2a27;
+    --tag-bg: #1d2a3b;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #121211; --surface-1: #1a1a19; --border: #33332f;
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+  --accent: #86b6ef; --series-1: #3987e5; --series-2: #d95926; --grid: #2a2a27;
+  --tag-bg: #1d2a3b;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: var(--accent); }
+header { border-bottom: 1px solid var(--border); background: var(--surface-1); }
+header .wrap { display: flex; flex-wrap: wrap; gap: 4px 20px; align-items: baseline; }
+header .brand { font-weight: 650; color: var(--text-primary); text-decoration: none; margin-right: auto; }
+header nav a { color: var(--text-secondary); text-decoration: none; }
+header nav a:hover { color: var(--text-primary); }
+.wrap { max-width: 960px; margin: 0 auto; padding: 14px 16px; }
+main.wrap { padding-top: 24px; padding-bottom: 48px; }
+h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 8px; }
+h2 { font-size: 1.15rem; margin: 28px 0 8px; }
+.muted { color: var(--text-secondary); }
+.small { font-size: .875rem; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 12px 0; }
+table { border-collapse: collapse; width: 100%; font-size: .925rem; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.tag { display: inline-block; background: var(--tag-bg); color: var(--text-primary); border-radius: 4px;
+  padding: 0 6px; margin: 2px 4px 2px 0; font-size: .8rem; text-decoration: none; }
+.pill { font-size: .75rem; border: 1px solid var(--border); border-radius: 999px; padding: 0 8px; color: var(--text-secondary); }
+form.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+form.filters label { display: flex; flex-direction: column; font-size: .8rem; color: var(--text-secondary); }
+input, select, button { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface-1); color: var(--text-primary); }
+button { cursor: pointer; background: var(--accent); color: var(--surface-1); border-color: var(--accent); }
+.chart { width: 100%; max-width: 600px; height: auto; display: block; }
+.chart .grid { stroke: var(--grid); stroke-width: 1; }
+.chart .tick { fill: var(--text-muted); font-size: 12px; }
+.chart .bar:hover path { opacity: .8; }
+.legend { display: flex; gap: 16px; font-size: .85rem; color: var(--text-secondary); margin: 4px 0 8px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: baseline; }
+.note { font-size: .825rem; color: var(--text-secondary); border-left: 3px solid var(--border); padding-left: 10px; }
+.excerpt { white-space: pre-wrap; }
+@media (max-width: 600px) { table { font-size: .85rem; } th, td { padding: 5px 4px; } }
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <a class="brand" href="/">CS Enforcement Intelligence</a>
+  <nav><a href="/search">Search</a> &nbsp; <a href="/modes">Failure modes</a> &nbsp; <a href="/digest">Digest</a> &nbsp; <a href="/methodology">Methodology</a></nav>
+</div></header>
+<main class="wrap">
+{% block body %}{% endblock %}
+</main>
+</body>
+</html>

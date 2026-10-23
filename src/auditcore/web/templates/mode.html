@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ mode.name }}{% endblock %}
+{% block body %}
+<p class="small muted">{{ tax.categories[mode.category] }} &middot; {{ mode.id }}</p>
+<h1>{{ mode.name }}</h1>
+<p>{{ mode.definition }}</p>
+{% if mode.exclude %}<p class="small muted"><strong>Not this mode:</strong> {{ mode.exclude }}</p>{% endif %}
+<p class="small">Mapped CFR: {{ mode.cfr|join(", ") }}</p>
+{% if mode.related %}<p class="small">Related: {% for r in mode.related %}<a class="tag" href="/modes/{{ r }}">{{ r }} {{ tax.modes[r].name }}</a>{% endfor %}</p>{% endif %}
+
+<h2>Trend</h2>
+{% if live and trend %}
+<div class="legend">{% for key, label, color in series %}<span><span class="swatch" style="background:{{ color }}"></span>{{ label }}</span>{% endfor %}</div>
+{{ chart }}
+<details><summary class="small">Table view</summary>
+<table><thead><tr><th>Year</th><th class="num">Form 483</th><th class="num">Warning letter</th></tr></thead><tbody>
+{% for y, v in trend.items() %}<tr><td>{{ y }}</td><td class="num">{{ v["483"] }}</td><td class="num">{{ v["wl"] }}</td></tr>{% endfor %}
+</tbody></table></details>
+{% if cfr %}
+<h2>CFR sections cited</h2>
+<table><tbody>{% for sec, n in cfr[:10] %}<tr><td>21 CFR {{ sec }}</td><td class="num">{{ n }}</td></tr>{% endfor %}</tbody></table>
+{% endif %}
+<p class="note">{{ note }}</p>
+{% elif live %}
+<div class="card muted">No accepted citations yet.</div>
+{% else %}
+<div class="card muted">In review. This mode has not yet met the {{ "%.2f"|format(bar) }} precision bar on the gold set
+{% if ev and ev.precision is not none %}(current precision {{ "%.2f"|format(ev.precision) }}, n={{ ev.support }}){% endif %}, so no counts are published.</div>
+{% endif %}
+
+<h2>Remediation pattern</h2>
+{% if pattern %}
+<div class="card"><h3>{{ pattern.title }}</h3>{{ pattern.html|safe }}
+<p class="small muted">Public sources: {{ pattern.sources|join("; ") }}</p></div>
+{% else %}
+<div class="card muted">Not yet written.</div>
+{% endif %}
+{% endblock %}

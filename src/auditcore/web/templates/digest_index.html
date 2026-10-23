@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Digest archive{% endblock %}
+{% block body %}
+<h1>Digest archive</h1>
+<p class="muted">Monthly: what moved in computerized-systems enforcement, deep dives on notable findings, and one remediation spotlight.</p>
+{% for i in issues %}
+<div class="card"><a href="/digest/{{ i.issue }}">{{ i.title }}</a></div>
+{% else %}
+<div class="card muted">No issues published yet.</div>
+{% endfor %}
+{% endblock %}

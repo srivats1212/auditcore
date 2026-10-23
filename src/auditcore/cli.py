@@ -1,0 +1,392 @@
+"""Command line: ``auditcore <group> <command>``. Run ``auditcore -h``."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sys
+from datetime import date
+from pathlib import Path
+
+from .config import get_settings
+
+
+def _session():
+    from .db import init_db, session_scope
+
+    init_db()
+    return session_scope()
+
+
+def _archive():
+    from .ingest.store import RawArchive
+
+    return RawArchive(get_settings().archive_dir)
+
+
+def _fetcher():
+    from .ingest.common import Fetcher
+
+    return Fetcher(get_settings())
+
+
+def _print(obj) -> None:
+    print(json.dumps(obj, indent=2, default=str))
+
+
+# ------------------------------------------------------------------ commands
+
+def cmd_init(a):
+    from .db import init_db
+    from .taxonomy.loader import load_taxonomy, sync_taxonomy
+
+    init_db()
+    with _session() as s:
+        print(f"database ready; taxonomy rows added: {sync_taxonomy(s, load_taxonomy())}")
+
+
+def cmd_ingest_wl(a):
+    from .ingest.warning_letters import ingest_index
+
+    with _session() as s:
+        _print(ingest_index(s, _archive(), None if a.no_fetch else _fetcher(), Path(a.xlsx).read_bytes(),
+                            source_url=a.source_url, fetch_letters=not a.no_fetch, limit=a.limit))
+
+
+def cmd_ingest_wl_files(a):
+    from .ingest.warning_letters import ingest_letter_files
+
+    with _session() as s:
+        _print(ingest_letter_files(s, _archive(), [Path(p) for p in a.paths]))
+
+
+def cmd_ingest_483(a):
+    from .ingest.form483 import ingest_reading_room
+
+    with _session() as s:
+        _print(ingest_reading_room(s, _archive(), _fetcher(), listing_url=a.url, limit=a.limit))
+
+
+def cmd_ingest_483_files(a):
+    from .ingest.form483 import ingest_pdf_files
+
+    with _session() as s:
+        _print(ingest_pdf_files(s, _archive(), [Path(p) for p in a.paths], Path(a.manifest) if a.manifest else None))
+
+
+def cmd_ingest_dashboard(a):
+    from .ingest.dashboard import ingest_dashboard
+
+    with _session() as s:
+        _print(ingest_dashboard(s, _archive(), _fetcher(), product_types=a.product_type or None))
+
+
+def cmd_runs(a):
+    from sqlalchemy import select
+
+    from .models import IngestionRun
+
+    with _session() as s:
+        for r in s.scalars(select(IngestionRun).order_by(IngestionRun.id.desc()).limit(a.n)):
+            print(f"#{r.id} {r.source:22} {r.status:8} seen={r.n_seen} new={r.n_new} "
+                  f"versioned={r.n_versioned} skipped={r.n_skipped} errors={r.n_errors} {r.started_at:%Y-%m-%d %H:%M}")
+
+
+def cmd_process(a):
+    from .tagging.llm import LlmTagger
+    from .tagging.pipeline import run_pipeline
+    from .taxonomy.loader import load_taxonomy, sync_taxonomy
+
+    tax = load_taxonomy()
+    with _session() as s:
+        sync_taxonomy(s, tax)
+        _print(run_pipeline(s, tax, tagger=LlmTagger(tax) if a.llm else None, limit=a.limit))
+
+
+def cmd_review(a):
+    from .tagging.review import decide, review_queue
+    from .taxonomy.loader import load_taxonomy
+
+    tax = load_taxonomy()
+    reviewer = a.reviewer
+    with _session() as s:
+        items = review_queue(s, mode_id=a.mode, limit=a.limit)
+        if not items:
+            print("review queue is empty")
+            return
+        for n, item in enumerate(items, 1):
+            mode = tax.modes.get(item.mode_id)
+            print("\n" + "=" * 78)
+            print(f"[{n}/{len(items)}] citation {item.citation_id}  ->  {item.mode_id} {mode.name if mode else ''}")
+            print(f"proposed by {item.sources}, confidence {item.best_confidence:.2f}")
+            if mode:
+                print(f"definition: {mode.definition}")
+            for p in item.proposals:
+                if p.evidence:
+                    print(f"  evidence ({p.provenance}): \"{p.evidence}\"")
+            print("-" * 78)
+            print(item.text[:2500])
+            while True:
+                choice = input("[a]ccept  [r]eject  [s]kip  [q]uit > ").strip().lower()
+                if choice in ("a", "r", "s", "q"):
+                    break
+            if choice == "q":
+                break
+            if choice in ("a", "r"):
+                decide(s, item.citation_id, item.mode_id, accept=choice == "a", reviewer=reviewer)
+                s.commit()
+
+
+def cmd_gold_sample(a):
+    from .evaluation.gold import export_blind, sample_gold
+
+    with _session() as s:
+        ids = sample_gold(s, a.n, seed=a.seed)
+        print(f"exported {export_blind(s, ids, Path(a.out))} citations to {a.out} (blind: text only)")
+
+
+def cmd_gold_import(a):
+    from .evaluation.gold import import_labels
+    from .taxonomy.loader import load_taxonomy
+
+    with _session() as s:
+        print(f"imported {import_labels(s, Path(a.csv), tagger=a.tagger, taxonomy=load_taxonomy())} labels as {a.tagger}")
+
+
+def cmd_gold_agreement(a):
+    from .evaluation.gold import agreement
+    from .taxonomy.loader import load_taxonomy
+
+    with _session() as s:
+        _print(agreement(s, load_taxonomy(), a.a, a.b))
+
+
+def cmd_gold_adjudicate(a):
+    from .evaluation.gold import adjudicate
+    from .taxonomy.loader import load_taxonomy
+
+    with _session() as s:
+        _print(adjudicate(s, load_taxonomy(), a=a.a, b=a.b,
+                          disagreements_csv=Path(a.disagreements) if a.disagreements else None,
+                          resolutions_csv=Path(a.resolutions) if a.resolutions else None))
+
+
+def cmd_gold_evaluate(a):
+    from .evaluation.gold import PIPELINES, evaluate, passing_modes, score_by_trap
+    from .taxonomy.loader import load_taxonomy
+
+    tax = load_taxonomy()
+    bar = get_settings().precision_bar
+    with _session() as s:
+        for pipeline in ([a.pipeline] if a.pipeline else PIPELINES):
+            scores = evaluate(s, tax, pipeline)
+            live = passing_modes(s, tax.version, bar=bar, pipeline=pipeline)
+            print(f"\n== {pipeline} (bar {bar:.2f}) ==")
+            print(f"{'mode':12} {'P':>6} {'R':>6} {'tp':>4} {'fp':>4} {'fn':>4}  gate")
+            for mid, sc in sorted(scores.items()):
+                if sc.tp + sc.fp + sc.fn == 0:
+                    continue
+                p = f"{sc.precision:.2f}" if sc.precision is not None else "n/a"
+                r = f"{sc.recall:.2f}" if sc.recall is not None else "n/a"
+                print(f"{mid:12} {p:>6} {r:>6} {sc.tp:4} {sc.fp:4} {sc.fn:4}  {'PASS' if mid in live else 'hold'}")
+            traps = score_by_trap(s, pipeline)
+            if traps:
+                print("traps:", json.dumps(traps))
+
+
+def cmd_stats(a):
+    from .analytics.stats import compute_annual_stats, escalation_rates
+    from .taxonomy.loader import load_taxonomy
+
+    tax = load_taxonomy()
+    with _session() as s:
+        print(f"annual stat rows: {compute_annual_stats(s, tax.version)}")
+        if a.escalation:
+            _print(escalation_rates(s, tax.version, window_days=a.window))
+
+
+def cmd_digest_draft(a):
+    from .digest.build import draft_issue
+    from .evaluation.gold import passing_modes
+    from .taxonomy.loader import load_taxonomy
+
+    tax = load_taxonomy()
+    year, month = (int(x) for x in a.month.split("-"))
+    content = Path(a.content)
+    with _session() as s:
+        allowed = passing_modes(s, tax.version, bar=get_settings().precision_bar)
+        print(draft_issue(s, tax, year, month, out_dir=content / "digest", remediation_dir=content / "remediation",
+                          allowed=allowed))
+
+
+def cmd_digest_publish(a):
+    from .digest.build import publish_issue
+
+    print(publish_issue(Path(a.path), email_dir=Path(a.email_dir)))
+
+
+def cmd_remediation_check(a):
+    from .remediation.patterns import load_patterns
+
+    bad = 0
+    for mid, p in load_patterns(Path(a.content) / "remediation").items():
+        state = "ok" if not p.problems else "; ".join(p.problems)
+        bad += bool(p.problems)
+        print(f"{mid:12} {p.status:10} {state}")
+    sys.exit(1 if bad else 0)
+
+
+def cmd_remediation_todo(a):
+    from sqlalchemy import func, select
+
+    from .models import FailureMode
+    from .remediation.patterns import load_patterns
+    from .taxonomy.loader import load_taxonomy
+
+    tax = load_taxonomy()
+    done = {m for m, p in load_patterns(Path(a.content) / "remediation").items() if p.publishable}
+    with _session() as s:
+        rows = s.execute(select(FailureMode.mode_id, func.count()).where(
+            FailureMode.provenance == "human", FailureMode.status == "accepted")
+            .group_by(FailureMode.mode_id).order_by(func.count().desc()).limit(a.n)).all()
+    for mid, n in rows:
+        print(f"{mid:12} {n:6}  {'written' if mid in done else 'TODO'}  {tax.modes[mid].name if mid in tax.modes else ''}")
+
+
+def cmd_lint(a):
+    from .copy_lint import lint_paths
+
+    roots = [Path(p) for p in a.paths]
+    files = [f for r in roots for f in ([r] if r.is_file() else
+             [*r.rglob("*.md"), *r.rglob("*.html"), *r.rglob("*.yaml")])]
+    issues = lint_paths(files)
+    for i in issues:
+        print(f"{i.where}:{i.line}: {i.snippet}")
+    print(f"{len(files)} files, {len(issues)} em dash issues")
+    sys.exit(1 if issues else 0)
+
+
+def cmd_serve(a):
+    import uvicorn
+
+    from .db import init_db
+    from .web.app import create_app
+
+    init_db()
+    uvicorn.run(create_app(content_dir=a.content), host=a.host, port=a.port)
+
+
+# ------------------------------------------------------------------ parser
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="auditcore", description="FDA computerized-systems enforcement intelligence")
+    p.add_argument("-v", "--verbose", action="store_true")
+    sub = p.add_subparsers(dest="group", required=True)
+
+    sub.add_parser("init", help="create tables and load taxonomy").set_defaults(fn=cmd_init)
+
+    ing = sub.add_parser("ingest", help="fetch and archive source documents").add_subparsers(dest="cmd", required=True)
+    x = ing.add_parser("wl", help="warning-letter XLSX index, then letter pages")
+    x.add_argument("xlsx")
+    x.add_argument("--source-url")
+    x.add_argument("--no-fetch", action="store_true", help="index only, do not fetch letter pages")
+    x.add_argument("--limit", type=int)
+    x.set_defaults(fn=cmd_ingest_wl)
+    x = ing.add_parser("wl-files", help="saved letter HTML files named <CMS>.html")
+    x.add_argument("paths", nargs="+")
+    x.set_defaults(fn=cmd_ingest_wl_files)
+    x = ing.add_parser("483", help="OII reading room listing and PDFs")
+    x.add_argument("--url")
+    x.add_argument("--limit", type=int)
+    x.set_defaults(fn=cmd_ingest_483)
+    x = ing.add_parser("483-files", help="saved 483 PDFs, optional CSV manifest")
+    x.add_argument("paths", nargs="+")
+    x.add_argument("--manifest")
+    x.set_defaults(fn=cmd_ingest_483_files)
+    x = ing.add_parser("dashboard", help="FDA Data Dashboard inspections and compliance actions")
+    x.add_argument("--product-type", action="append")
+    x.set_defaults(fn=cmd_ingest_dashboard)
+    x = ing.add_parser("runs", help="recent ingestion runs")
+    x.add_argument("-n", type=int, default=20)
+    x.set_defaults(fn=cmd_runs)
+
+    x = sub.add_parser("process", help="segment documents and propose tags")
+    x.add_argument("--llm", action="store_true", help="also run LLM tagging (needs Anthropic credentials)")
+    x.add_argument("--limit", type=int)
+    x.set_defaults(fn=cmd_process)
+
+    x = sub.add_parser("review", help="interactive human review of proposed tags")
+    x.add_argument("--reviewer", required=True)
+    x.add_argument("--mode")
+    x.add_argument("--limit", type=int, default=50)
+    x.set_defaults(fn=cmd_review)
+
+    gold = sub.add_parser("gold", help="gold-label set and evaluation").add_subparsers(dest="cmd", required=True)
+    x = gold.add_parser("sample", help="stratified sample, exported blind")
+    x.add_argument("--n", type=int, default=300)
+    x.add_argument("--seed", type=int, default=13)
+    x.add_argument("--out", default="gold_blind.csv")
+    x.set_defaults(fn=cmd_gold_sample)
+    x = gold.add_parser("import", help="import one tagger's labels")
+    x.add_argument("csv")
+    x.add_argument("--tagger", required=True, help='e.g. "A" or "B"')
+    x.set_defaults(fn=cmd_gold_import)
+    x = gold.add_parser("agreement", help="inter-rater agreement (Cohen's kappa per mode)")
+    x.add_argument("--a", default="A")
+    x.add_argument("--b", default="B")
+    x.set_defaults(fn=cmd_gold_agreement)
+    x = gold.add_parser("adjudicate", help="resolve agreements, export or import disputes")
+    x.add_argument("--a", default="A")
+    x.add_argument("--b", default="B")
+    x.add_argument("--disagreements")
+    x.add_argument("--resolutions")
+    x.set_defaults(fn=cmd_gold_adjudicate)
+    x = gold.add_parser("evaluate", help="per-mode precision and recall")
+    x.add_argument("--pipeline", choices=["rules", "llm", "proposed", "published"])
+    x.set_defaults(fn=cmd_gold_evaluate)
+
+    x = sub.add_parser("stats", help="recompute annual aggregates")
+    x.add_argument("--escalation", action="store_true")
+    x.add_argument("--window", type=int, default=730)
+    x.set_defaults(fn=cmd_stats)
+
+    dg = sub.add_parser("digest", help="monthly digest").add_subparsers(dest="cmd", required=True)
+    x = dg.add_parser("draft")
+    x.add_argument("month", nargs="?", default=date.today().strftime("%Y-%m"), help="YYYY-MM")
+    x.add_argument("--content", default="content")
+    x.set_defaults(fn=cmd_digest_draft)
+    x = dg.add_parser("publish")
+    x.add_argument("path")
+    x.add_argument("--email-dir", default="data/email")
+    x.set_defaults(fn=cmd_digest_publish)
+
+    rm = sub.add_parser("remediation", help="remediation patterns").add_subparsers(dest="cmd", required=True)
+    x = rm.add_parser("check")
+    x.add_argument("--content", default="content")
+    x.set_defaults(fn=cmd_remediation_check)
+    x = rm.add_parser("todo", help="top modes by accepted citations and whether a pattern exists")
+    x.add_argument("--content", default="content")
+    x.add_argument("-n", type=int, default=20)
+    x.set_defaults(fn=cmd_remediation_todo)
+
+    x = sub.add_parser("lint", help="no-em-dash check on user-facing copy")
+    x.add_argument("paths", nargs="*", default=["content", "src/auditcore/web/templates", "src/auditcore/taxonomy"])
+    x.set_defaults(fn=cmd_lint)
+
+    x = sub.add_parser("serve", help="run the web UI")
+    x.add_argument("--host", default="127.0.0.1")
+    x.add_argument("--port", type=int, default=8000)
+    x.add_argument("--content", default="content")
+    x.set_defaults(fn=cmd_serve)
+    return p
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s %(message)s")
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()
