@@ -50,7 +50,7 @@ auditcore ingest 483-files pdfs/*.pdf --manifest manifest.csv   # PDFs saved by 
 auditcore ingest runs
 
 # 2. Segment and propose tags
-auditcore process            # rules only
+auditcore process            # rules only (add --resegment after segmentation changes)
 auditcore process --llm --llm-max 20   # rules + Claude proposals; reports tokens, cost, cost per citation
 
 # 3. Human review: nothing is counted until accepted here
@@ -72,6 +72,7 @@ auditcore remediation check
 auditcore digest draft 2026-10    # data sections filled in, editor placeholders for the rest
 auditcore digest publish content/digest/2026-10.md
 auditcore lint
+auditcore report --out reports   # static report.html + citations.csv, opens from disk
 auditcore serve
 ```
 

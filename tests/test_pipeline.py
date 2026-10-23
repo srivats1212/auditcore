@@ -266,3 +266,16 @@ def test_llm_max_caps_calls(session, loaded, taxonomy, fake_client_factory, fake
     client = fake_client_factory(lambda kw: fake_response(json.dumps({"tags": []})))
     stats = run_pipeline(session, taxonomy, tagger=LlmTagger(taxonomy, client=client), llm_max=2)
     assert len(client.messages.calls) == 2 and stats["llm_usage"]["calls"] == 2
+
+
+def test_resegment_clears_machine_rows_but_refuses_after_review(session, loaded, taxonomy):
+    from auditcore.tagging.pipeline import ResegmentRefused, clear_segmentation
+
+    n_obs = session.query(Observation).count()
+    assert clear_segmentation(session) == n_obs and session.query(Citation).count() == 0
+    run_pipeline(session, taxonomy)
+    assert session.query(Observation).count() == n_obs  # same documents, same segmentation
+    fm = session.scalars(select(FailureMode).where(FailureMode.provenance == "rules")).first()
+    decide(session, fm.citation_id, fm.mode_id, accept=True, reviewer="sk")
+    with pytest.raises(ResegmentRefused):
+        clear_segmentation(session)

@@ -104,6 +104,10 @@ def cmd_process(a):
     tax = load_taxonomy()
     with _session() as s:
         sync_taxonomy(s, tax)
+        if a.resegment:
+            from .tagging.pipeline import clear_segmentation
+
+            print(f"cleared {clear_segmentation(s)} observations for re-segmentation")
         _print(run_pipeline(s, tax, tagger=LlmTagger(tax) if a.llm else None, limit=a.limit, llm_max=a.llm_max))
 
 
@@ -270,6 +274,15 @@ def cmd_lint(a):
     sys.exit(1 if issues else 0)
 
 
+def cmd_report(a):
+    from .reports.static import build_report
+    from .taxonomy.loader import load_taxonomy
+
+    with _session() as s:
+        out = build_report(s, load_taxonomy(), Path(a.out), samples=a.samples)
+    print(f"report: {out['html']}\ncsv:    {out['csv']}")
+
+
 def cmd_serve(a):
     import uvicorn
 
@@ -321,6 +334,8 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--llm", action="store_true", help="also run LLM tagging (needs Anthropic credentials)")
     x.add_argument("--limit", type=int, help="process at most this many documents")
     x.add_argument("--llm-max", type=int, help="make at most this many LLM calls (one per citation)")
+    x.add_argument("--resegment", action="store_true",
+                   help="rebuild observations and citations with current code (refused once anything is reviewed)")
     x.set_defaults(fn=cmd_process)
 
     x = sub.add_parser("review", help="interactive human review of proposed tags")
@@ -380,6 +395,11 @@ def build_parser() -> argparse.ArgumentParser:
     x = sub.add_parser("lint", help="no-em-dash check on user-facing copy")
     x.add_argument("paths", nargs="*", default=["content", "src/auditcore/web/templates", "src/auditcore/taxonomy"])
     x.set_defaults(fn=cmd_lint)
+
+    x = sub.add_parser("report", help="static HTML report and CSV export of the ingested corpus")
+    x.add_argument("--out", default="reports")
+    x.add_argument("--samples", type=int, default=10)
+    x.set_defaults(fn=cmd_report)
 
     x = sub.add_parser("serve", help="run the web UI")
     x.add_argument("--host", default="127.0.0.1")

@@ -592,9 +592,9 @@ modes:
     cfr: ["21 CFR 211.68(a)", "21 CFR 11.10(a)", "21 CFR 820.70(i)", "21 CFR 211.63"]
     related: [CS-P11-003, CS-VAL-002, CS-VAL-003]
     rules:
-      - (computer\w*|software|systems?|lims|chromatography data system|cds|mes|erp|eqms|plc)[^.]{0,60}(not|never|had not been|has not been|were not|was not) (been )?validated
-      - (failed to|did not|no) [^.]{0,20}validat\w+[^.]{0,40}(computer\w*|software|systems?)
-      - unvalidated (computer\w*|software|systems?)
+      - (computer\w*|software|computerized systems?|lims|chromatography data system|cds|mes|erp|eqms|plc)[^.]{0,60}(not|never|had not been|has not been|were not|was not) (been )?validated
+      - (failed to|did not|no) [^.]{0,20}validat\w+[^.]{0,40}(computer\w*|software|computerized systems?)
+      - unvalidated (computer\w*|software|computerized systems?)
     examples:
       - The firm used a LIMS to record release results without validating it for that use.
 
@@ -824,7 +824,9 @@ modes:
     cfr: ["21 CFR 211.188", "21 CFR 211.194(a)", "21 CFR 211.100(b)"]
     related: [CS-DI-002, CS-DI-004]
     rules:
-      - (falsif\w+|fabricat\w+|back-?dat\w+)
+      - (falsif\w+|back-?dat\w+)
+      - fabricat\w+[^.]{0,30}(data|records?|results?|entries|documents?|logs?|signatures?)
+      - (data|records?|results?|entries|documents?|logs?|signatures?)[^.]{0,30}(were|was|had been) fabricated
     examples:
       - Cleaning logs were signed for dates when the area was not in operation.
 

@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 from .cfr import CfrRef, extract_cfr
 
+ISO_CLAUSE = re.compile(r"ISO\s*13485", re.I)
+
 
 @dataclass
 class Segment:
@@ -29,10 +31,16 @@ _WL_START_HINT = re.compile(
     r"(?:violations?|deviations?) (?:were|was) (?:observed|identified|documented)|"
     r"observed (?:the following|significant)|cgmp (?:violations|deviations)|violations? of)\b"
 )
+# Sections that follow the numbered violations. Device and food letters add
+# separately titled violation groups (UDI, misbranding, radiation control) and
+# end with "Please notify this office..." and a signature block.
 _WL_STOP = re.compile(
     r"(?im)^\s*(data integrity remediation|cgmp consultant recommended|conclusion|"
     r"repeat (?:violations|observations)|quality systems?|responsibilities as a contractor|"
-    r"within fifteen working days|this letter (?:notifies|is not intended))\b"
+    r"within fifteen working days|this letter (?:notifies|is not intended)|"
+    r"please notify this office|sincerely\b|unique device identification violations?|"
+    r"misbranding\b|electronic product radiation control|medical device reporting|"
+    r"adulterat\w+ violations?|unapproved new drugs?\b|misbranded drugs?\b)"
 )
 
 
@@ -120,7 +128,12 @@ def split_citations(observation_text: str) -> list[CitationDraft]:
     else:
         lead, parts = "", [text]
 
-    heading_refs = extract_cfr(lead_sentence(lead or text)) or extract_cfr(lead or text)
+    head = lead_sentence(lead or text)
+    heading_refs = extract_cfr(head)
+    if not heading_refs and not ISO_CLAUSE.search(head):
+        # QMSR headings cite an ISO 13485 clause instead of a CFR section; then
+        # sections elsewhere in the text are unrelated and must not be borrowed.
+        heading_refs = extract_cfr(lead or text)
     drafts: list[CitationDraft] = []
     for part in parts:
         body = f"{lead} {part}".strip() if lead else part

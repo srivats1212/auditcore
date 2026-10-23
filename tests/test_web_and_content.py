@@ -173,3 +173,35 @@ class TestCopyLint:
         files = [*(ROOT / "content").rglob("*.md"), *(ROOT / "src/auditcore/web/templates").glob("*.html"),
                  ROOT / "src/auditcore/taxonomy/taxonomy_v1.yaml"]
         assert lint_paths(files) == []
+
+
+def test_static_report_and_csv(session, archive, wl_html, taxonomy, tmp_path):
+    import csv as _csv
+    from auditcore.ingest.warning_letters import ingest_letter_html
+    from auditcore.models import WarningLetter
+    from auditcore.reports.static import build_report
+    from auditcore.tagging.pipeline import run_pipeline
+
+    wl = WarningLetter(cms_number="699001", company_name="Example Pharma Inc.", issue_date=date(2025, 3, 4),
+                       issuing_office="Center for Drug Evaluation and Research (CDER)")
+    food = WarningLetter(cms_number="699002", company_name="Food Co", issue_date=date(2025, 3, 5),
+                         issuing_office="Human Foods Program")
+    session.add_all([wl, food])
+    session.flush()
+    ingest_letter_html(session, archive, wl, wl_html, url="https://example.test/wl")
+    ingest_letter_html(session, archive, food, wl_html.replace(b"699001", b"699002"), url="https://example.test/food")
+    run_pipeline(session, taxonomy)
+
+    out = build_report(session, taxonomy, tmp_path / "rep", samples=3)
+    html = out["html"].read_text()
+    assert "not yet reviewed by a person" in html                       # unreviewed basis is stated
+    assert "Shared logins" in html and "21 CFR 211.68" in html           # top modes and CFR breakdown
+    assert "Example Pharma Inc." in html and "https://example.test/wl" in html  # facility and source link
+    assert html.count('class="card"') == 3
+    assert "1 food and veterinary letters are excluded" in html
+    assert "—" not in html and "<script" not in html                 # house style; static, no JS
+
+    rows = list(_csv.DictReader(out["csv"].open()))
+    assert {r["in_scope"] for r in rows} == {"yes", "no"}
+    assert any("CS-ACC-001" in r["proposed_modes_unreviewed"] for r in rows)
+    assert all(r["text"] for r in rows)

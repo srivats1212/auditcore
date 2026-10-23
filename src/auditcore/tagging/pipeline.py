@@ -131,6 +131,32 @@ def llm_tag_citation(session: Session, citation: Citation, tagger: LlmTagger) ->
     return len(tags)
 
 
+class ResegmentRefused(RuntimeError):
+    pass
+
+
+def clear_segmentation(session: Session) -> int:
+    """Drop observations, citations and machine-proposed tags so documents
+    are re-segmented with the current code. Refused once any tag has been
+    reviewed or any gold label exists: those attach to citation rows, and
+    re-segmenting would orphan them."""
+    from sqlalchemy import delete, func
+
+    from ..models import GoldLabel
+
+    reviewed = session.scalar(select(func.count()).select_from(FailureMode).where(
+        (FailureMode.provenance == "human") | (FailureMode.reviewer.is_not(None)) & (FailureMode.reviewer != "system")))
+    gold = session.scalar(select(func.count()).select_from(GoldLabel))
+    if reviewed or gold:
+        raise ResegmentRefused(f"{reviewed} reviewed tags and {gold} gold labels would be orphaned; not re-segmenting")
+    n = session.scalar(select(func.count()).select_from(Observation)) or 0
+    session.execute(delete(FailureMode))
+    session.execute(delete(Citation))
+    session.execute(delete(Observation))
+    session.flush()
+    return n
+
+
 def run_pipeline(session: Session, taxonomy: Taxonomy, *, tagger: LlmTagger | None = None,
                  limit: int | None = None, llm_max: int | None = None) -> dict:
     """``limit`` caps documents; ``llm_max`` caps LLM calls (one per citation)."""
