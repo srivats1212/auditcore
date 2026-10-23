@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>What FDA cites in computerized systems</h1>
+<p class="muted">Citation-level analysis of published FDA warning letters and Form 483s: what the agency is citing, how fast it escalates, and how to fix it.</p>
+{% if request.query_params.get("subscribed") %}<div class="card">Thanks. Check your inbox to confirm.</div>{% endif %}
+
+<h2>Most-cited failure modes since {{ since }}</h2>
+{% if top %}
+<table>
+  <thead><tr><th>Failure mode</th><th class="num">Citations</th></tr></thead>
+  <tbody>
+  {% for mode_id, n in top %}
+    <tr><td><a href="/modes/{{ mode_id }}">{{ tax.modes[mode_id].name }}</a> <span class="muted small">{{ mode_id }}</span></td><td class="num">{{ n }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="note">Counts are citations, not documents. Only failure modes that meet the precision bar on the gold set are shown ({{ n_live }} of {{ tax|length }} today). <a href="/methodology">Methodology</a>.</p>
+{% else %}
+<div class="card muted">No failure mode has cleared the evaluation bar yet. Trends appear here once a mode is scored on the gold set at or above the precision bar.</div>
+{% endif %}
+
+{% if latest %}
+<h2>Latest digest</h2>
+<div class="card"><a href="/digest/{{ latest.issue }}">{{ latest.title }}</a></div>
+{% endif %}
+
+<h2>Monthly digest</h2>
+<form method="post" action="/subscribe" class="filters">
+  <label>Email <input type="email" name="email" required></label>
+  <button type="submit">Subscribe</button>
+</form>
+{% endblock %}

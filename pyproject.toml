@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auditcore"
+version = "0.1.0"
+description = "Citation-level intelligence on FDA enforcement of computerized systems in GxP environments."
+requires-python = ">=3.11"
+dependencies = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "requests>=2.31",
+    "openpyxl>=3.1",
+    "pdfplumber>=0.11",
+    "PyYAML>=6.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "Jinja2>=3.1",
+    "anthropic>=0.80",
+    "beautifulsoup4>=4.12",
+    "lxml>=5",
+    "markdown>=3.5",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "reportlab>=4", "httpx"]
+
+[project.scripts]
+auditcore = "auditcore.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+auditcore = ["taxonomy/*.yaml", "web/templates/*.html", "web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

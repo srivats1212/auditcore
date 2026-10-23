@@ -1,0 +1,881 @@
+# Failure-mode taxonomy v1: computerized systems in GxP.
+#
+# Stable IDs never change meaning. A definition change that would move a
+# citation in or out of a mode is a new taxonomy version, not an edit.
+#
+# Fields
+#   id          stable ID, CS-<CAT>-<NNN>
+#   name        short label
+#   definition  what must be true of the citation for this tag to apply
+#   exclude     what looks similar but is NOT this mode (sharpens inter-rater agreement)
+#   cfr         mapped CFR sections (QSR and QMSR forms both listed where relevant)
+#   related     related mode IDs
+#   rules       high-precision regexes for stage-1 pre-tagging. Matched per
+#               sentence, case-insensitive, after OCR cleanup. Every pattern is
+#               wrapped in word boundaries by the loader. Keep these strict;
+#               recall comes from the LLM stage.
+#   examples    paraphrased observation patterns. STATUS: illustrative. Replace
+#               with paraphrases of real published citations during curation
+#               (never verbatim beyond fair use).
+
+version: "1.0"
+effective: "2026-10-23"
+
+categories:
+  SPR: Spreadsheets
+  AUD: Audit trails
+  ACC: Access controls
+  BKP: Backup and restore
+  EDC: Electronic document control
+  CLD: Cloud and SaaS
+  P11: Part 11 controls
+  VAL: Validation lifecycle
+  CHG: Change and configuration management
+  LAB: Laboratory data systems
+  DI: Data integrity (ALCOA+)
+  INF: Infrastructure and security
+
+modes:
+  # ---------------------------------------------------------------- Spreadsheets
+  - id: CS-SPR-001
+    category: SPR
+    name: Unvalidated spreadsheet in GxP use
+    definition: A spreadsheet performs GxP calculations, data reduction, or release decisions without documented validation for its intended use.
+    exclude: A spreadsheet that is validated but has unprotected cells (CS-SPR-002). A spreadsheet used only for non-GxP tracking.
+    cfr: ["21 CFR 211.68(a)", "21 CFR 211.68(b)", "21 CFR 211.194(a)", "21 CFR 820.70(i)", "21 CFR 11.10(a)"]
+    related: [CS-SPR-002, CS-VAL-001]
+    rules:
+      - (excel|spreadsheets?|workbooks?)[^.]{0,80}(not|never|lack(ed|s)?|without)[^.]{0,30}validat
+      - unvalidated (excel|spreadsheets?|workbooks?)
+      - (excel|spreadsheets?|workbooks?)[^.]{0,60}(had not been|has not been|were not|was not) (validated|qualified)
+    examples:
+      - Assay results were calculated in a spreadsheet template that had not been validated.
+      - Stability trending relied on a workbook with no documented verification of its formulas.
+
+  - id: CS-SPR-002
+    category: SPR
+    name: Unprotected cells and formulas
+    definition: Cells, formulas, or macros in a GxP spreadsheet can be altered by users, with no locking or protection.
+    exclude: Lack of validation alone (CS-SPR-001).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(d)"]
+    related: [CS-SPR-001]
+    rules:
+      - (cells?|formulas?|macros?)[^.]{0,60}(not|were not|was not|un)\s?(locked|protected)
+      - unprotected (cells?|formulas?|spreadsheets?)
+      - (formulas?|cells?)[^.]{0,40}could be (modified|changed|edited|overwritten)
+    examples:
+      - Formula cells in the potency calculation template were not locked and could be overwritten.
+
+  - id: CS-SPR-003
+    category: SPR
+    name: Spreadsheet outside document control
+    definition: A GxP spreadsheet template is not under document control (no version, approval, or controlled storage location).
+    exclude: Uncontrolled copies of approved master documents generally (CS-EDC-003).
+    cfr: ["21 CFR 211.100(a)", "21 CFR 211.68(b)", "21 CFR 820.40"]
+    related: [CS-SPR-004, CS-EDC-003]
+    rules:
+      - (spreadsheets?|templates?|workbooks?)[^.]{0,80}(not|were not|was not) (under|subject to) (document|change) control
+      - uncontrolled (spreadsheets?|excel|workbooks?)
+    examples:
+      - Analysts used locally saved copies of a calculation template with no version or approval record.
+
+  - id: CS-SPR-004
+    category: SPR
+    name: No spreadsheet inventory
+    definition: The firm has no inventory of spreadsheets used in GxP activities, so their validation status cannot be determined.
+    exclude: An inventory exists but a listed spreadsheet is unvalidated (CS-SPR-001).
+    cfr: ["21 CFR 211.68(b)"]
+    related: [CS-SPR-001, CS-VAL-004]
+    rules:
+      - (no|not maintain\w*|lack\w*)[^.]{0,30}(inventory|list)[^.]{0,40}(spreadsheets?|excel)
+    examples:
+      - The firm could not identify which spreadsheets were used for GMP calculations.
+
+  - id: CS-SPR-005
+    category: SPR
+    name: Spreadsheet results not retained
+    definition: Spreadsheet calculations are overwritten or not saved, so the electronic record of the calculation is not retained (only a printout or nothing remains).
+    exclude: General failure to preserve original records outside spreadsheets (CS-DI-001).
+    cfr: ["21 CFR 211.180(a)", "21 CFR 211.194(a)", "21 CFR 211.68(b)"]
+    related: [CS-DI-001, CS-P11-004]
+    rules:
+      - (spreadsheets?|excel|workbooks?)[^.]{0,80}(not saved|overwritten|not retained|discarded)
+    examples:
+      - The calculation workbook was reused for each batch and the prior entries were overwritten.
+
+  - id: CS-SPR-006
+    category: SPR
+    name: Unverified manual transcription into spreadsheet
+    definition: Data are manually entered into a GxP spreadsheet with no second-person or system verification of the entries.
+    exclude: Transcription between paper records only.
+    cfr: ["21 CFR 211.68(b)", "21 CFR 211.194(a)(8)"]
+    related: [CS-SPR-001, CS-INF-003]
+    rules:
+      - (manual\w*|hand)\s(entered|entry|transcri\w+)[^.]{0,60}(spreadsheets?|excel)[^.]{0,60}(not|without|no) (verif|check|review)
+    examples:
+      - Instrument readings were typed into a spreadsheet without verification of the entries.
+
+  # ---------------------------------------------------------------- Audit trails
+  - id: CS-AUD-001
+    category: AUD
+    name: Audit trail not enabled
+    definition: A GxP system's audit trail function is disabled, turned off, or was never activated, so changes are not recorded.
+    exclude: The system has no audit-trail capability at all and validation did not address it (CS-VAL-003). Audit trail enabled but not reviewed (CS-AUD-002).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(e)", "21 CFR 820.70(i)"]
+    related: [CS-AUD-005, CS-AUD-006]
+    rules:
+      - audit trails?[^.]{0,60}(disabled|deactivated|turned off|switched off|not (enabled|activated|turned on))
+      - (disabled|deactivated|turned off)[^.]{0,30}audit trails?
+      - audit trail (function\w*|feature)[^.]{0,30}(was|were) not (enabled|activated|in use)
+    examples:
+      - The audit trail on the dissolution software was disabled at installation and never enabled.
+
+  - id: CS-AUD-002
+    category: AUD
+    name: Audit trail not routinely reviewed
+    definition: Audit trails exist but are not reviewed, or are reviewed only after a problem, as part of record review or batch release.
+    exclude: No written procedure for review (CS-AUD-003); both may apply to the same citation.
+    cfr: ["21 CFR 211.68(b)", "21 CFR 211.192", "21 CFR 211.194(a)"]
+    related: [CS-AUD-003, CS-AUD-004]
+    rules:
+      - audit trails?[^.]{0,60}(not|never|were not|was not|are not|is not) (routinely |regularly |periodically )?reviewed
+      - (no|did not|does not|failed to)[^.]{0,30}review[^.]{0,20}audit trails?
+      - audit trail reviews?[^.]{0,40}(not|never) (performed|conducted|documented)
+    examples:
+      - Audit trails for chromatography data were not reviewed as part of release testing.
+
+  - id: CS-AUD-003
+    category: AUD
+    name: No audit-trail review procedure
+    definition: There is no written procedure defining when, how, and by whom audit trails are reviewed.
+    exclude: A procedure exists but is not followed (CS-AUD-002).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 211.100(a)", "21 CFR 211.180(e)"]
+    related: [CS-AUD-002]
+    rules:
+      - (no|lack\w*|absence of)[^.]{0,20}(written )?(procedures?|sops?)[^.]{0,50}audit trails?
+      - audit trails?[^.]{0,40}(no|without) (written )?(procedure|sop)
+    examples:
+      - The firm had no procedure describing review of audit trails for the HPLC data system.
+
+  - id: CS-AUD-004
+    category: AUD
+    name: Unauthorized data reprocessing not detected
+    definition: Data were reprocessed, modified, or deleted, and the firm's review process did not detect it (evidence visible in the audit trail after the fact).
+    exclude: Reprocessing that was detected and investigated. Retesting of samples (CS-DI-003).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 211.192", "21 CFR 211.194(a)"]
+    related: [CS-AUD-002, CS-LAB-002, CS-LAB-003]
+    rules:
+      - (reprocess\w*|re-?integrat\w+)[^.]{0,80}(without|no) (justification|documentation|explanation|investigation)
+      - audit trails?[^.]{0,40}(showed|revealed|indicated)[^.]{0,80}(delet\w+|reprocess\w*|modif\w+|alter\w+)
+    examples:
+      - The audit trail showed chromatograms were reprocessed several times before a passing result was reported, with no justification.
+
+  - id: CS-AUD-005
+    category: AUD
+    name: Audit trail incomplete
+    definition: The audit trail exists but does not capture who, what, when, or why for changes, or does not capture deletions or certain record types.
+    exclude: Audit trail disabled (CS-AUD-001).
+    cfr: ["21 CFR 11.10(e)", "21 CFR 211.68(b)"]
+    related: [CS-AUD-001, CS-AUD-006]
+    rules:
+      - audit trails?[^.]{0,60}(did not|does not|do not|failed to) (capture|record|include|log)
+      - audit trails?[^.]{0,30}(incomplete|insufficient|inadequate)
+    examples:
+      - The system audit trail did not record the reason for changes to sample results.
+
+  - id: CS-AUD-006
+    category: AUD
+    name: Audit trail can be edited or deleted
+    definition: Users can modify, delete, or overwrite audit trail entries.
+    exclude: Users can delete data (not audit entries) (CS-ACC-002 or CS-LAB-003).
+    cfr: ["21 CFR 11.10(e)", "21 CFR 211.68(b)"]
+    related: [CS-AUD-001, CS-ACC-002]
+    rules:
+      - audit trails?[^.]{0,40}(could be|can be|were) (deleted|modified|edited|overwritten|purged|cleared)
+    examples:
+      - Analysts with standard accounts could clear the instrument event log.
+
+  - id: CS-AUD-007
+    category: AUD
+    name: System clock not controlled
+    definition: Users can change the date or time on a GxP workstation or instrument, undermining audit trail timestamps.
+    exclude: Time-zone configuration documented and controlled.
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(e)"]
+    related: [CS-AUD-005, CS-DI-002]
+    rules:
+      - (date|time|clock)s?( and time)?[^.]{0,40}(could be|can be|were) (changed|altered|modified|adjusted)
+      - (users?|analysts?)[^.]{0,40}(able|access|ability) to (change|alter|modify)[^.]{0,20}(system )?(date|time|clock)
+    examples:
+      - Analysts were able to change the Windows system clock on the UV workstation.
+
+  # ---------------------------------------------------------------- Access controls
+  - id: CS-ACC-001
+    category: ACC
+    name: Shared logins
+    definition: Multiple people use the same user ID or password, so actions cannot be attributed to an individual.
+    exclude: A shared drive or shared folder (not a login). Generic service accounts not used by people.
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(d)", "21 CFR 11.100(a)", "21 CFR 11.300(a)"]
+    related: [CS-DI-006, CS-P11-002]
+    rules:
+      - shared (a |the same |one |a single |a common |common )?(user ?names?|user ?ids?|logins?|log-ins?|accounts?|passwords?|credentials)
+      - (user ?names?|user ?ids?|logins?|accounts?|passwords?)[^.]{0,30}(were|was|are|is) shared
+      - (generic|common|group) (user ?names?|user ?ids?|logins?|accounts?)[^.]{0,60}(used|shared) by
+    examples:
+      - All analysts logged into the chromatography software with a single generic account.
+
+  - id: CS-ACC-002
+    category: ACC
+    name: Excessive privileges
+    definition: Users hold privileges beyond their role (for example, analysts with administrator rights able to delete, modify, or reprocess data).
+    exclude: Administrators who also generate data (CS-ACC-005) when privileges are otherwise appropriate.
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(d)", "21 CFR 11.10(g)"]
+    related: [CS-ACC-005, CS-AUD-006, CS-LAB-003]
+    rules:
+      - (analysts?|users?|operators?|personnel)[^.]{0,60}(administrator|admin|full|elevated|unrestricted) (rights|privileges|access)
+      - (administrator|admin|elevated) (rights|privileges|access)[^.]{0,60}(allow\w*|permit\w*|enabl\w+|able) to (delete|modify|alter|overwrite|reprocess)
+      - (privileges|rights|permissions)[^.]{0,40}(allowed|permitted|enabled) (them |users |analysts )?to (delete|modify|alter|overwrite)
+    examples:
+      - Laboratory analysts had administrator privileges and could delete data files.
+
+  - id: CS-ACC-003
+    category: ACC
+    name: No periodic user access review
+    definition: The firm does not periodically review user accounts and privileges on GxP systems.
+    exclude: Accounts of departed staff left active (CS-ACC-006), which may co-occur.
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(d)"]
+    related: [CS-ACC-006, CS-ACC-002]
+    rules:
+      - (no|not|never|lack\w*)[^.]{0,30}(periodic|routine)[^.]{0,20}(user )?(access|account|privilege) reviews?
+      - (user )?(access|accounts?|privileges)[^.]{0,40}(not|never) (periodically |routinely )?reviewed
+    examples:
+      - User access lists for the LIMS had never been reviewed since system go-live.
+
+  - id: CS-ACC-004
+    category: ACC
+    name: Unauthorized personnel access to GxP records
+    definition: People without authorization (former employees, contractors, untrained staff, other departments) can access or change GxP records or systems.
+    exclude: Authorized users with excessive rights (CS-ACC-002).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(d)"]
+    related: [CS-ACC-002, CS-ACC-006]
+    rules:
+      - (unauthorized|non-authorized) (personnel|persons|individuals|users|access)[^.]{0,60}(records?|data|systems?|computer)
+      - (not|no|without) (adequately |appropriately )?(restrict|limit)\w*[^.]{0,30}access[^.]{0,30}(authorized|computer|system|data|records?)
+    examples:
+      - Warehouse staff could log in and edit laboratory results in the LIMS.
+
+  - id: CS-ACC-005
+    category: ACC
+    name: No segregation of system administration
+    definition: People who generate or review GxP data also administer the system that holds it, with no independent oversight.
+    exclude: Privileges beyond role in general (CS-ACC-002).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(d)"]
+    related: [CS-ACC-002]
+    rules:
+      - (lack of|no|without) (segregation|separation) of (duties|roles)
+      - (analysts?|users?)[^.]{0,30}(also|were also|served as)[^.]{0,20}(system )?administrators?
+    examples:
+      - The laboratory supervisor who approved results was also the only system administrator.
+
+  - id: CS-ACC-006
+    category: ACC
+    name: Accounts not deactivated on departure
+    definition: User accounts of people who left or changed roles remained active on GxP systems.
+    exclude: Missing periodic review with no evidence of stale accounts (CS-ACC-003).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(d)"]
+    related: [CS-ACC-003, CS-ACC-004]
+    rules:
+      - (former|terminated|departed|separated) (employees?|personnel|staff|users?|analysts?)[^.]{0,60}(active|access|accounts?|not (deactivated|disabled|removed))
+      - accounts?[^.]{0,40}(not|never) (deactivated|disabled|removed|revoked)
+    examples:
+      - Accounts for analysts who had left the firm remained active in the data system.
+
+  - id: CS-ACC-007
+    category: ACC
+    name: Weak authentication controls
+    definition: Password, lockout, or session controls are absent or not enforced (no password, no expiry, no automatic logoff, no lockout after failed attempts).
+    exclude: Shared credentials (CS-ACC-001).
+    cfr: ["21 CFR 11.300", "21 CFR 11.10(d)", "21 CFR 211.68(b)"]
+    related: [CS-ACC-001]
+    rules:
+      - (no|without|not require\w*) (passwords?|password protection|log-?in)
+      - (automatic|auto)[ -]?(log-?off|log-?out|lock\w*)[^.]{0,30}(not|no|disabled)
+      - (no|not) (enforce|require)\w*[^.]{0,20}password (expir\w+|complexity|change)
+    examples:
+      - The balance software required no login, and the workstation never locked when idle.
+
+  # ---------------------------------------------------------------- Backup and restore
+  - id: CS-BKP-001
+    category: BKP
+    name: Backup not performed
+    definition: GxP electronic data are not backed up, or backups are not performed on the defined schedule.
+    exclude: Backups performed but not verified (CS-BKP-002). Cloud-hosted data (CS-CLD-003).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(c)", "21 CFR 211.180"]
+    related: [CS-BKP-002, CS-BKP-005]
+    rules:
+      - (data|records?|files?)[^.]{0,40}(not|never|were not|was not) (being )?backed[ -]up
+      - (no|lack\w* (a|an)?|without (a|an)?)[^.]{0,10}back[ -]?up (procedure|process|system|schedule|program)
+    examples:
+      - Electronic data on the particle counter were not backed up.
+
+  - id: CS-BKP-002
+    category: BKP
+    name: Backup not verified
+    definition: Backups run, but the firm does not verify they completed successfully or are complete and readable.
+    exclude: No restore ever tested (CS-BKP-003); both may apply.
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(c)"]
+    related: [CS-BKP-001, CS-BKP-003]
+    rules:
+      - back[ -]?ups?[^.]{0,60}(not|never) (verified|checked|confirmed|monitored)
+      - (no|without) (verification|confirmation)[^.]{0,30}back[ -]?ups?
+    examples:
+      - Backup job failures were logged but no one reviewed the logs, and several months of backups were incomplete.
+
+  - id: CS-BKP-003
+    category: BKP
+    name: No restore testing
+    definition: The firm has never tested restoring GxP data from backup, so recoverability is unproven.
+    exclude: Cloud provider restore not tested (CS-CLD-003).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(c)"]
+    related: [CS-BKP-002, CS-INF-002]
+    rules:
+      - (restor\w+|recover\w*)[^.]{0,60}(not|never) (been )?(tested|verified|challenged|performed|demonstrated)
+      - (no|without) (restor\w+|recovery) (test\w*|verification)
+    examples:
+      - The firm had not tested restoring chromatography data from backup tapes.
+
+  - id: CS-BKP-004
+    category: BKP
+    name: Backup media uncontrolled
+    definition: Backup media (drives, tapes, discs) are not stored, labeled, or secured under control.
+    exclude: Backup not performed at all (CS-BKP-001).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(c)"]
+    related: [CS-BKP-001]
+    rules:
+      - (back[ -]?up|external|usb|portable) (media|drives?|discs?|disks?|tapes?)[^.]{0,60}(uncontrolled|not controlled|unsecured|not secured|unlabeled|not labeled)
+    examples:
+      - Backup copies were kept on an unlabeled USB drive in an unlocked desk.
+
+  - id: CS-BKP-005
+    category: BKP
+    name: Data held only on standalone workstation
+    definition: GxP data reside only on a local, standalone workstation or instrument PC with no network storage or backup, and data were or could be lost.
+    exclude: Backup procedure exists but was not followed (CS-BKP-001).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 211.180(a)"]
+    related: [CS-BKP-001, CS-DI-001]
+    rules:
+      - (stand-?alone|local) (workstations?|computers?|pcs?|hard drives?)[^.]{0,80}(not backed|no back[ -]?up|lost|only)
+      - data[^.]{0,30}(were|was) (lost|unrecoverable)[^.]{0,40}(hard drive|computer|workstation|crash|failure)
+    examples:
+      - Several years of FTIR data were lost when the instrument PC hard drive failed.
+
+  # ---------------------------------------------------------------- Electronic document control
+  - id: CS-EDC-001
+    category: EDC
+    name: Unlimited printing from eQMS
+    definition: Controlled documents can be printed from the electronic document system without limit, tracking, or watermarking, so uncontrolled working copies can exist.
+    exclude: Uncontrolled issuance of blank batch records or forms (CS-EDC-005).
+    cfr: ["21 CFR 211.100(a)", "21 CFR 211.186", "21 CFR 820.40"]
+    related: [CS-EDC-002, CS-EDC-003]
+    rules:
+      - (print\w*)[^.]{0,40}(unlimited|without (limit|restriction|control|tracking))
+      - (unlimited|uncontrolled) print\w*
+    examples:
+      - Any user could print controlled SOPs from the document system with no record of how many copies existed.
+
+  - id: CS-EDC-002
+    category: EDC
+    name: No print reconciliation
+    definition: Printed controlled copies or forms are not reconciled (issued vs returned or destroyed).
+    exclude: Unlimited printing capability without evidence of reconciliation failure (CS-EDC-001).
+    cfr: ["21 CFR 211.100(a)", "21 CFR 211.186", "21 CFR 211.192"]
+    related: [CS-EDC-001, CS-EDC-005]
+    rules:
+      - (no|not|never|without|lack\w*)[^.]{0,30}reconcil\w+[^.]{0,40}(print\w*|copies|forms?|worksheets?|records?)
+      - (print\w*|copies|forms?|worksheets?)[^.]{0,40}(not|never) reconciled
+    examples:
+      - Printed analytical worksheets were not reconciled, and unused copies could not be accounted for.
+
+  - id: CS-EDC-003
+    category: EDC
+    name: Uncontrolled copies of master documents
+    definition: Uncontrolled or obsolete copies of master documents (SOPs, master batch records, specifications) are in use.
+    exclude: Spreadsheet templates outside control (CS-SPR-003).
+    cfr: ["21 CFR 211.100(a)", "21 CFR 211.186", "21 CFR 820.40"]
+    related: [CS-EDC-001, CS-SPR-003]
+    rules:
+      - (uncontrolled|obsolete|superseded|unapproved) (copies|versions?|documents?|master|sops?|procedures?)[^.]{0,40}(in use|used|found|available|present)
+    examples:
+      - An obsolete version of the cleaning SOP was found posted in the manufacturing suite.
+
+  - id: CS-EDC-004
+    category: EDC
+    name: Uncontrolled destruction of GMP records
+    definition: GMP records (paper or electronic) were discarded, shredded, or deleted outside any controlled process.
+    exclude: Deletion of raw instrument data (CS-LAB-003).
+    cfr: ["21 CFR 211.180", "21 CFR 211.188", "21 CFR 211.194"]
+    related: [CS-DI-001, CS-LAB-003]
+    rules:
+      - (records?|documents?|worksheets?|printouts?|logbooks?|batch record pages?)[^.]{0,20}(found )?in (the )?(trash|waste|garbage|recycling|shred\w*)
+      - (records?|documents?|worksheets?|printouts?|logbooks?|pages) (were|was|had been|being) (discarded|destroyed|shredded|torn)
+      - (shredd\w+|destroy\w+|discard\w+)[^.]{0,40}(gmp|cgmp|batch|original|raw|analytical) (records?|documents?|data)
+    examples:
+      - Investigators found torn batch record pages in a waste bin near the filling line.
+
+  - id: CS-EDC-005
+    category: EDC
+    name: Uncontrolled issuance of blank forms
+    definition: Blank batch records, logbooks, or worksheets are issued without control (no numbering, issuance log, or accountability).
+    exclude: Printing of controlled SOPs (CS-EDC-001).
+    cfr: ["21 CFR 211.100(a)", "21 CFR 211.186", "21 CFR 211.188"]
+    related: [CS-EDC-002, CS-DI-004]
+    rules:
+      - (blank|uncontrolled) (forms?|batch records?|worksheets?|logbooks?|templates?)[^.]{0,60}(not controlled|uncontrolled|freely|without (control|issuance|numbering))
+      - (issuance|issue)[^.]{0,30}(forms?|batch records?|worksheets?)[^.]{0,30}(not controlled|uncontrolled)
+    examples:
+      - Blank batch record forms were freely available on a shared drive and printed as needed.
+
+  - id: CS-EDC-006
+    category: EDC
+    name: Electronic records not retained for the required period
+    definition: Electronic records are not retained, or not retrievable, for the required retention period.
+    exclude: Data lost due to standalone storage (CS-BKP-005).
+    cfr: ["21 CFR 211.180", "21 CFR 11.10(c)", "21 CFR 58.195"]
+    related: [CS-BKP-005, CS-P11-005]
+    rules:
+      - (electronic )?(records?|data)[^.]{0,40}(not|were not|was not) (retained|retrievable|available)[^.]{0,40}(retention|period|required)
+    examples:
+      - Electronic chromatograms older than two years could not be retrieved after a software migration.
+
+  # ---------------------------------------------------------------- Cloud and SaaS
+  - id: CS-CLD-001
+    category: CLD
+    name: Vendor-provided controls not configured
+    definition: A hosted or SaaS system offers GxP controls (audit trail, e-signature, role restrictions) that the firm did not configure or enable.
+    exclude: On-premise system audit trail disabled (CS-AUD-001).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10", "21 CFR 820.70(i)"]
+    related: [CS-AUD-001, CS-CLD-004]
+    rules:
+      - (cloud|saas|hosted|web-based)[^.]{0,80}(not|never) (configured|enabled|activated|implemented)
+    examples:
+      - The hosted QMS supported electronic signatures, but the firm had not enabled them.
+
+  - id: CS-CLD-002
+    category: CLD
+    name: SaaS change notifications not assessed
+    definition: Vendor-pushed releases or updates to a SaaS system are not assessed for GxP impact before or after deployment.
+    exclude: On-premise upgrades (CS-CHG-003).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 211.100(a)", "21 CFR 820.70(b)"]
+    related: [CS-CHG-003, CS-CLD-004]
+    rules:
+      - (cloud|saas|vendor|supplier)[^.]{0,40}(releases?|updates?|upgrades?|changes?)[^.]{0,60}(not|never|without) (assessed|evaluated|reviewed|impact)
+    examples:
+      - Quarterly SaaS releases were applied with no assessment of impact on validated functions.
+
+  - id: CS-CLD-003
+    category: CLD
+    name: Cloud backup and restore never tested
+    definition: The firm relies on the cloud or hosting provider for backup but has never verified that data can be restored.
+    exclude: On-premise restore testing (CS-BKP-003).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(c)"]
+    related: [CS-BKP-003, CS-CLD-005]
+    rules:
+      - (cloud|saas|hosted|provider|vendor)[^.]{0,60}(back[ -]?up|restor\w+|recover\w*)[^.]{0,60}(not|never) (tested|verified|confirmed)
+    examples:
+      - The firm assumed the hosting vendor backed up the LIMS but had no evidence of a successful restore.
+
+  - id: CS-CLD-004
+    category: CLD
+    name: Vendor audit not performed
+    definition: The firm did not audit or otherwise assess the supplier of a GxP computerized system or hosting service.
+    exclude: Missing quality agreement where an audit was performed (CS-CLD-005).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 820.50", "21 CFR 211.84"]
+    related: [CS-CLD-005, CS-CLD-001]
+    rules:
+      - (no|not|never|without|lack\w*)[^.]{0,30}(audit\w*|assess\w+|qualif\w+)[^.]{0,40}(software|cloud|saas|hosting|it|computer\w*) (vendors?|suppliers?|providers?)
+    examples:
+      - The LIMS hosting provider had never been assessed by the firm's quality unit.
+
+  - id: CS-CLD-005
+    category: CLD
+    name: No quality agreement with system provider
+    definition: There is no quality or service agreement defining GxP data responsibilities (backup, change notification, access, retention) with the system or hosting provider.
+    exclude: Contract manufacturing quality agreements unrelated to computerized systems.
+    cfr: ["21 CFR 211.68(b)", "21 CFR 820.50"]
+    related: [CS-CLD-004]
+    rules:
+      - (no|without|lack\w*)[^.]{0,20}(quality|service level) agreements?[^.]{0,60}(software|cloud|saas|hosting|it) (vendors?|suppliers?|providers?)
+    examples:
+      - No agreement defined whether the SaaS vendor or the firm was responsible for record retention.
+
+  # ---------------------------------------------------------------- Part 11 controls
+  - id: CS-P11-001
+    category: P11
+    name: Missing electronic signatures
+    definition: Records that require a signature (approval, review, execution) are created electronically with no signature applied, or approvals are captured with no signature at all.
+    exclude: Signatures applied but not controlled (CS-P11-002).
+    cfr: ["21 CFR 11.50", "21 CFR 11.70", "21 CFR 211.186", "21 CFR 211.188"]
+    related: [CS-P11-002]
+    rules:
+      - (electronic )?(records?|approvals?|reviews?)[^.]{0,40}(not|were not|without) (electronically )?signed
+      - (no|lack\w* of|without) (an )?electronic signatures?
+    examples:
+      - Electronic batch record steps were completed without the required electronic signature.
+
+  - id: CS-P11-002
+    category: P11
+    name: Signature controls not enforced
+    definition: Electronic signatures are not uniquely linked to individuals, lack printed name/date/meaning, can be applied by others, or are not linked to their records.
+    exclude: No signature at all (CS-P11-001). Shared logins without a signature component (CS-ACC-001).
+    cfr: ["21 CFR 11.50", "21 CFR 11.70", "21 CFR 11.100", "21 CFR 11.200"]
+    related: [CS-P11-001, CS-ACC-001]
+    rules:
+      - electronic signatures?[^.]{0,60}(not|were not|was not) (linked|unique|controlled|secure)
+      - electronic signatures?[^.]{0,60}(could be|were) (applied|executed|used) by (others|another|other (users?|individuals?))
+    examples:
+      - Supervisors applied electronic approvals using another user's credentials.
+
+  - id: CS-P11-003
+    category: P11
+    name: Validation documentation inadequate
+    definition: Validation documentation for a GxP system exists but is incomplete, unapproved, or does not support the system's validated state (missing protocols, results, traceability).
+    exclude: No validation at all (CS-VAL-001).
+    cfr: ["21 CFR 11.10(a)", "21 CFR 211.68(b)", "21 CFR 820.70(i)"]
+    related: [CS-VAL-001, CS-VAL-003]
+    rules:
+      - validation (documentation|documents|records|package|reports?)[^.]{0,40}(inadequate|incomplete|insufficient|deficient|missing|not (approved|available))
+    examples:
+      - The validation package for the eQMS lacked executed test scripts.
+
+  - id: CS-P11-004
+    category: P11
+    name: Hybrid records uncontrolled
+    definition: Paper printouts are treated as the original record while the electronic record is ignored or not linked, or hybrid paper/electronic records are not reconciled.
+    exclude: Electronic results not retained (CS-SPR-005, CS-DI-001).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 211.180(d)", "21 CFR 211.194(a)"]
+    related: [CS-DI-001, CS-LAB-004]
+    rules:
+      - (printouts?|paper (copies|records?))[^.]{0,60}(considered|treated as|defined as|designated as) (the )?(original|raw data|official|master)
+      - hybrid (records?|systems?)[^.]{0,40}(not controlled|uncontrolled|not linked|not reconciled)
+    examples:
+      - The firm treated paper printouts as raw data and did not review the electronic data that produced them.
+
+  - id: CS-P11-005
+    category: P11
+    name: Cannot generate complete copies for inspection
+    definition: The system or firm cannot produce accurate and complete copies of records, in human-readable and electronic form, for inspection.
+    exclude: Records destroyed (CS-EDC-004).
+    cfr: ["21 CFR 11.10(b)", "21 CFR 211.180(c)"]
+    related: [CS-EDC-006]
+    rules:
+      - (unable|not able|could not|cannot) (to )?(provide|produce|generate|retrieve)[^.]{0,40}(electronic|complete|accurate) (records?|copies|data)
+    examples:
+      - The firm could not produce the electronic chromatography data for the batches under review.
+
+  - id: CS-P11-006
+    category: P11
+    name: Operational checks not enforced
+    definition: The system does not enforce required sequencing of steps, authority checks, or device checks (for example, an EBR step can be skipped).
+    exclude: Access control weaknesses generally (CS-ACC-*).
+    cfr: ["21 CFR 11.10(f)", "21 CFR 11.10(g)", "21 CFR 11.10(h)", "21 CFR 211.68(a)"]
+    related: [CS-VAL-003]
+    rules:
+      - (sequenc\w+|steps?)[^.]{0,40}(not enforced|could be (skipped|bypassed|performed out of (order|sequence)))
+    examples:
+      - The EBR allowed operators to record line clearance after starting the batch.
+
+  # ---------------------------------------------------------------- Validation lifecycle
+  - id: CS-VAL-001
+    category: VAL
+    name: Computerized system not validated for intended use
+    definition: A computerized system used in GxP activities (LIMS, CDS, MES, ERP, eQMS, equipment PLC) has not been validated for its intended use.
+    exclude: Spreadsheets (CS-SPR-001). Validation exists but documentation is weak (CS-P11-003).
+    cfr: ["21 CFR 211.68(a)", "21 CFR 11.10(a)", "21 CFR 820.70(i)", "21 CFR 211.63"]
+    related: [CS-P11-003, CS-VAL-002, CS-VAL-003]
+    rules:
+      - (computer\w*|software|systems?|lims|chromatography data system|cds|mes|erp|eqms|plc)[^.]{0,60}(not|never|had not been|has not been|were not|was not) (been )?validated
+      - (failed to|did not|no) [^.]{0,20}validat\w+[^.]{0,40}(computer\w*|software|systems?)
+      - unvalidated (computer\w*|software|systems?)
+    examples:
+      - The firm used a LIMS to record release results without validating it for that use.
+
+  - id: CS-VAL-002
+    category: VAL
+    name: No user requirements specification
+    definition: Validation was performed without defined user or functional requirements, so testing cannot demonstrate fitness for intended use.
+    exclude: Requirements exist but testing does not cover data integrity (CS-VAL-003).
+    cfr: ["21 CFR 211.68(a)", "21 CFR 820.30(c)", "21 CFR 820.70(i)"]
+    related: [CS-VAL-001, CS-VAL-003]
+    rules:
+      - (no|lack\w*|without|absence of)[^.]{0,20}(user |functional )?requirements? (specification|document)
+    examples:
+      - The MES validation had no user requirements against which tests were traced.
+
+  - id: CS-VAL-003
+    category: VAL
+    name: Validation does not challenge data-integrity controls
+    definition: Validation testing did not verify audit trail, security, access, or data-handling controls that the system relies on.
+    exclude: No validation at all (CS-VAL-001).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(a)"]
+    related: [CS-VAL-001, CS-AUD-001, CS-P11-006]
+    rules:
+      - validation[^.]{0,80}(did not|does not|failed to) (include|address|challenge|test|verify|evaluate)[^.]{0,40}(audit trails?|security|access|data integrity|user (roles|privileges))
+    examples:
+      - Validation of the CDS did not test whether analysts could delete or overwrite data.
+
+  - id: CS-VAL-004
+    category: VAL
+    name: No computerized-system inventory or risk assessment
+    definition: The firm has no inventory of GxP computerized systems or no risk assessment determining their validation and control needs.
+    exclude: Spreadsheet inventory (CS-SPR-004).
+    cfr: ["21 CFR 211.68(a)", "21 CFR 820.70(i)"]
+    related: [CS-SPR-004, CS-VAL-001]
+    rules:
+      - (no|lack\w*|without)[^.]{0,20}(inventory|list) of[^.]{0,20}(computer\w*|software|systems)
+      - (no|lack\w*|without)[^.]{0,20}risk assessments?[^.]{0,40}(computer\w*|software|systems)
+    examples:
+      - The firm could not provide a list of its GMP computerized systems or their validation status.
+
+  - id: CS-VAL-005
+    category: VAL
+    name: No periodic review of validated state
+    definition: Validated systems are not periodically reviewed to confirm they remain in a validated state.
+    exclude: Changes made without change control (CS-CHG-001).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 820.70(i)"]
+    related: [CS-CHG-001]
+    rules:
+      - (no|not|never|lack\w*)[^.]{0,20}periodic (review|evaluation|re-?validation)[^.]{0,40}(computer\w*|software|systems?|validat\w+)
+    examples:
+      - The CDS had not been reviewed for continued fitness since validation eight years earlier.
+
+  # ---------------------------------------------------------------- Change and configuration management
+  - id: CS-CHG-001
+    category: CHG
+    name: Change to computerized system without change control
+    definition: Changes to GxP software, configuration, or infrastructure were made without documented change control and impact assessment.
+    exclude: SaaS vendor releases (CS-CLD-002).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 211.100(a)", "21 CFR 820.70(b)", "21 CFR 11.10(k)"]
+    related: [CS-CHG-002, CS-CHG-003]
+    rules:
+      - (software|system|configuration|computer\w*)[^.]{0,30}changes?[^.]{0,40}(without|not (subject to|under)|outside) (a |the )?change control
+      - changes?[^.]{0,30}(to|in) (the )?(software|computer\w*|system configuration)[^.]{0,40}(not documented|undocumented|without)
+    examples:
+      - IT changed CDS processing settings without opening a change record.
+
+  - id: CS-CHG-002
+    category: CHG
+    name: Configuration not documented or controlled
+    definition: The validated configuration of a GxP system (settings, parameters, roles) is not documented, so the current state cannot be compared to the validated state.
+    exclude: Change made without control (CS-CHG-001).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 820.70(i)"]
+    related: [CS-CHG-001, CS-CHG-004]
+    rules:
+      - configuration[^.]{0,40}(not documented|undocumented|not controlled|uncontrolled|no (record|documentation))
+    examples:
+      - The firm could not show which audit trail settings were part of the validated configuration.
+
+  - id: CS-CHG-003
+    category: CHG
+    name: Software upgrade not assessed
+    definition: Software, firmware, or operating-system upgrades and patches were installed on GxP systems without assessment or re-verification.
+    exclude: SaaS vendor releases (CS-CLD-002).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 820.70(i)"]
+    related: [CS-CHG-001, CS-CLD-002]
+    rules:
+      - (software|firmware|operating system|windows) (upgrades?|updates?|patch\w*|versions?)[^.]{0,60}(without|not) (assess\w+|evaluat\w+|validat\w+|verif\w+|re-?qualif\w+)
+    examples:
+      - The instrument firmware was updated with no assessment of impact on validated methods.
+
+  - id: CS-CHG-004
+    category: CHG
+    name: Automation programs and recipes uncontrolled
+    definition: PLC programs, HMI recipes, or equipment setpoints can be changed without control, or backup copies of control programs are not maintained.
+    exclude: Laboratory instrument methods (CS-LAB-*).
+    cfr: ["21 CFR 211.68(a)", "21 CFR 211.68(b)", "21 CFR 820.70(i)"]
+    related: [CS-CHG-002, CS-ACC-002]
+    rules:
+      - (plc|hmi|scada|recipes?|setpoints?|set points?)[^.]{0,60}(could be|can be|were) (changed|modified|altered|edited)
+      - (plc|hmi|scada) (programs?|software|logic)[^.]{0,60}(not controlled|uncontrolled|no back[ -]?up|not backed)
+    examples:
+      - Operators could change sterilizer cycle setpoints at the HMI with no record of the change.
+
+  # ---------------------------------------------------------------- Laboratory data systems
+  - id: CS-LAB-001
+    category: LAB
+    name: Undocumented trial injections or runs
+    definition: Samples were tested or injected as "trial", "test", "system suitability", or "demo" runs that were not documented or reported, with results potentially used to decide whether to run the official test.
+    exclude: Retesting after an OOS (CS-DI-003).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 211.194(a)", "21 CFR 211.192"]
+    related: [CS-DI-003, CS-LAB-005]
+    rules:
+      - (trial|demo|practice|unofficial|prep|test) injections?
+      - (trial|demo|practice|unofficial) (runs?|samples?|analys[ie]s)
+      - (injections?|runs?)[^.]{0,40}(not (documented|reported|recorded))
+    examples:
+      - The CDS contained trial injections of release samples that were not reported or investigated.
+
+  - id: CS-LAB-002
+    category: LAB
+    name: Manual integration without justification
+    definition: Chromatographic peaks were manually integrated without a procedure, scientific justification, or review.
+    exclude: Reprocessing detected only in the audit trail (CS-AUD-004) when no manual integration is mentioned.
+    cfr: ["21 CFR 211.68(b)", "21 CFR 211.160(a)", "21 CFR 211.194(a)"]
+    related: [CS-AUD-004]
+    rules:
+      - manual(ly)? integrat\w+[^.]{0,80}(without|no|not) (justif\w+|documented|procedure|review\w*|approv\w+)
+      - (no|lack\w*)[^.]{0,20}(procedure|sop|controls?)[^.]{0,30}manual(ly)? integrat\w+
+    examples:
+      - Analysts manually integrated impurity peaks with no recorded justification.
+
+  - id: CS-LAB-003
+    category: LAB
+    name: Raw instrument data deleted
+    definition: Raw electronic data files from laboratory instruments were deleted, overwritten, or not saved.
+    exclude: Paper records discarded (CS-EDC-004).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 211.180(d)", "21 CFR 211.194(a)"]
+    related: [CS-ACC-002, CS-DI-001]
+    rules:
+      - (raw |electronic |original )?(data|files?|chromatograms?|results?)[^.]{0,40}(were|was|had been|been) (deleted|overwritten|removed|purged)
+      - (deletion|deleting|deleted) of[^.]{0,30}(raw |electronic |original )?(data|files?|chromatograms?|results?)
+    examples:
+      - Folders containing failing chromatograms were deleted from the instrument PC.
+
+  - id: CS-LAB-004
+    category: LAB
+    name: Instrument with no electronic data capture
+    definition: A laboratory instrument capable of storing electronic data is configured so only a printout is produced and no electronic record is retained.
+    exclude: Spreadsheet results not saved (CS-SPR-005).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 211.194(a)"]
+    related: [CS-P11-004, CS-BKP-005]
+    rules:
+      - (instruments?|balances?|ph meters?|spectrophotometers?|titrators?)[^.]{0,80}(not (configured|set up) to (save|store|retain)|no electronic (data|records?) (were|was) (saved|retained|stored))
+    examples:
+      - The titrator was set to print results only; no electronic data were saved.
+
+  - id: CS-LAB-005
+    category: LAB
+    name: Results or sequences excluded without documentation
+    definition: Injections, sequences, or results were aborted, excluded, or invalidated in the data system without documented justification.
+    exclude: Trial injections never intended to be reported (CS-LAB-001).
+    cfr: ["21 CFR 211.192", "21 CFR 211.194(a)", "21 CFR 211.68(b)"]
+    related: [CS-LAB-001, CS-DI-003]
+    rules:
+      - (sequences?|injections?|runs?|results?)[^.]{0,40}(aborted|excluded|invalidated|cancelled|canceled)[^.]{0,60}(without|no|not) (justif\w+|documentation|investigation|explanation)
+    examples:
+      - Sequences were aborted mid-run and restarted without explanation.
+
+  # ---------------------------------------------------------------- Data integrity (ALCOA+)
+  - id: CS-DI-001
+    category: DI
+    name: Original records not preserved
+    definition: Original (first-capture) records or true copies are not preserved; data are recorded on scrap paper, transcribed, or replaced.
+    exclude: Raw instrument electronic data deleted (CS-LAB-003). Spreadsheet results overwritten (CS-SPR-005).
+    cfr: ["21 CFR 211.180(d)", "21 CFR 211.188", "21 CFR 211.194(a)", "21 CFR 58.130(e)"]
+    related: [CS-LAB-003, CS-SPR-005, CS-EDC-004]
+    rules:
+      - (scrap|loose|unofficial|post-?it|sticky) (paper|notes?|sheets?)
+      - original (data|records?)[^.]{0,40}(not (retained|preserved|maintained|kept)|discarded|destroyed|lost)
+    examples:
+      - Weights were recorded on scrap paper and later transcribed into the logbook.
+
+  - id: CS-DI-002
+    category: DI
+    name: Data not recorded contemporaneously
+    definition: Activities were recorded after the fact, in advance, or in batches rather than at the time of performance.
+    exclude: Backdating with intent to falsify (CS-DI-005).
+    cfr: ["21 CFR 211.100(b)", "21 CFR 211.188(b)", "21 CFR 211.160(a)"]
+    related: [CS-DI-005]
+    rules:
+      - (not|were not|was not) (recorded|documented|entered) (contemporaneously|at the time)
+      - (pre-?filled|pre-?recorded|recorded in advance|documented in advance|filled out in advance)
+    examples:
+      - Batch record entries for later steps were already completed when investigators arrived.
+
+  - id: CS-DI-003
+    category: DI
+    name: Unauthorized retesting
+    definition: Samples were retested, or results replaced, without a documented investigation or authorization, until a passing result was obtained.
+    exclude: Undocumented trial injections (CS-LAB-001).
+    cfr: ["21 CFR 211.192", "21 CFR 211.194(a)", "21 CFR 211.160(a)"]
+    related: [CS-LAB-001, CS-LAB-005]
+    rules:
+      - re-?test\w*[^.]{0,60}(without|no) (investigation|justification|documentation|authorization|approval)
+      - test\w* into compliance
+    examples:
+      - An out-of-specification sample was retested until passing, with the original result not reported.
+
+  - id: CS-DI-004
+    category: DI
+    name: Conflicting records for the same lot
+    definition: Two or more records for the same lot, test, or activity contain conflicting data (for example, a batch record and electronic data disagree, or duplicate versions of a record exist).
+    exclude: Records not contemporaneous with no conflict shown (CS-DI-002).
+    cfr: ["21 CFR 211.188", "21 CFR 211.192", "21 CFR 211.194(a)"]
+    related: [CS-DI-005, CS-EDC-005]
+    rules:
+      - (conflicting|inconsistent|discrepant|contradictory) (data|records?|results?|entries|information)
+      - (duplicate|multiple|two) (versions?|copies) of[^.]{0,20}(batch records?|worksheets?|records?)[^.]{0,40}(different|conflicting)
+    examples:
+      - The electronic weight in the balance printout differed from the value recorded in the batch record.
+
+  - id: CS-DI-005
+    category: DI
+    name: Data falsification or backdating
+    definition: Records were fabricated, falsified, or backdated.
+    exclude: Late recording without falsification (CS-DI-002).
+    cfr: ["21 CFR 211.188", "21 CFR 211.194(a)", "21 CFR 211.100(b)"]
+    related: [CS-DI-002, CS-DI-004]
+    rules:
+      - (falsif\w+|fabricat\w+|back-?dat\w+)
+    examples:
+      - Cleaning logs were signed for dates when the area was not in operation.
+
+  - id: CS-DI-006
+    category: DI
+    name: Data not attributable
+    definition: Records do not identify who performed or recorded an activity or change.
+    exclude: Shared logins (CS-ACC-001), which is the most common cause; apply both if the citation states non-attributability.
+    cfr: ["21 CFR 211.188(b)", "21 CFR 211.194(a)(7)", "21 CFR 11.10(e)"]
+    related: [CS-ACC-001]
+    rules:
+      - (not|were not|was not|cannot be|could not be) (be )?attribut\w+
+      - (unable|not possible|impossible) to (identify|determine|attribute)[^.]{0,40}(who|which (analyst|user|individual|person))
+    examples:
+      - The firm could not determine which analyst processed the data.
+
+  # ---------------------------------------------------------------- Infrastructure and security
+  - id: CS-INF-001
+    category: INF
+    name: Workstation and operating-system controls inadequate
+    definition: GxP workstations allow uncontrolled software installation, removable media, operating-system file access, or lack security controls that protect data.
+    exclude: Application-level privileges (CS-ACC-002).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(d)"]
+    related: [CS-ACC-002, CS-LAB-003]
+    rules:
+      - (usb|removable media|external drives?)[^.]{0,40}(not (restricted|disabled|controlled)|allowed|permitted|enabled)
+      - (operating system|windows|file system|data folders?)[^.]{0,40}(access\w*|could be accessed)[^.]{0,40}(delete|modify|rename|move)
+    examples:
+      - Analysts could access the Windows file system and delete raw data folders outside the application.
+
+  - id: CS-INF-002
+    category: INF
+    name: No disaster recovery or continuity plan
+    definition: There is no disaster recovery or business continuity plan for GxP systems, or it has never been tested.
+    exclude: Restore testing of routine backups (CS-BKP-003).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(c)"]
+    related: [CS-BKP-003]
+    rules:
+      - (no|lack\w*|without)[^.]{0,20}(disaster recovery|business continuity|contingency) (plan|procedure)
+      - (disaster recovery|business continuity) (plan|procedure)s?[^.]{0,40}(not|never) (been )?(tested|established|developed)
+    examples:
+      - The firm had no plan for recovering the MES after a server failure.
+
+  - id: CS-INF-003
+    category: INF
+    name: Interface or data transfer not verified
+    definition: Data transferred between systems (instrument to LIMS, MES to ERP, migrations) are not verified for completeness and accuracy.
+    exclude: Manual entry into spreadsheets (CS-SPR-006).
+    cfr: ["21 CFR 211.68(b)", "21 CFR 11.10(a)"]
+    related: [CS-SPR-006, CS-EDC-006]
+    rules:
+      - (interfaces?|data transfers?|data migrations?|migrated data)[^.]{0,60}(not|never|without) (verified|validated|checked|reconciled)
+    examples:
+      - Results transferred from the instrument software to the LIMS were never verified for accuracy.

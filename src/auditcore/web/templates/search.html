@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Search citations{% endblock %}
+{% block body %}
+<h1>Search citations</h1>
+<form class="filters" method="get" action="/search">
+  <label>Text <input name="q" value="{{ params.q }}" placeholder="audit trail"></label>
+  <label>Failure mode
+    <select name="mode"><option value="">Any</option>
+      {% for m in allowed %}<option value="{{ m }}" {% if params.mode == m %}selected{% endif %}>{{ m }} {{ tax.modes[m].name }}</option>{% endfor %}
+    </select></label>
+  <label>CFR section <input name="cfr" value="{{ params.cfr }}" placeholder="211.68" size="9"></label>
+  <label>Year <input name="year" value="{{ params.year }}" size="5"></label>
+  <label>Document
+    <select name="kind"><option value="">Both</option>
+      <option value="483" {% if params.kind == "483" %}selected{% endif %}>Form 483</option>
+      <option value="wl" {% if params.kind == "wl" %}selected{% endif %}>Warning letter</option></select></label>
+  <label>Facility type <input name="facility_type" value="{{ params.facility_type }}" size="12"></label>
+  <button type="submit">Search</button>
+</form>
+<p class="muted small">{{ total }} citation{{ "" if total == 1 else "s" }}</p>
+{% for r in rows %}
+<div class="card">
+  <div class="small muted">
+    {{ "Form 483" if r.Observation.kind == "483" else "Warning letter" }}
+    {% if r.Observation.observed_date %} &middot; {{ r.Observation.observed_date.isoformat() }}{% endif %}
+    &middot; observation {{ r.Observation.number }}
+    {% if r.Citation.cfr_reference %} &middot; {{ r.Citation.cfr_reference.canonical }}{% endif %}
+    {% if r.Document.source_url %} &middot; <a href="{{ r.Document.source_url }}" rel="noopener">source</a>{% endif %}
+  </div>
+  <div class="excerpt">{{ r.Citation.text[:900] }}{% if r.Citation.text|length > 900 %}...{% endif %}</div>
+  {% for m in tags.get(r.Citation.id, []) %}<a class="tag" href="/modes/{{ m }}">{{ m }} {{ tax.modes[m].name }}</a>{% endfor %}
+</div>
+{% endfor %}
+{% if total > page * per %}
+<p><a href="?{% for k, v in params.items() if v %}{{ k }}={{ v|urlencode }}&{% endfor %}page={{ page + 1 }}">Next page</a></p>
+{% endif %}
+{% endblock %}

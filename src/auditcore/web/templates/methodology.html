@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Methodology{% endblock %}
+{% block body %}
+<h1>Methodology</h1>
+
+<h2>Corpus</h2>
+<p>The corpus is published FDA warning letters plus Form 483s published in the FDA OII FOIA electronic reading room. Most 483s are never published, so 483 counts describe the published subset, not all inspections. We do not file FOIA requests and do not include unpublished documents. Inspection and compliance-action metadata come from the FDA Data Dashboard.</p>
+
+<h2>What we count</h2>
+<p>The unit is the citation: one observation (a 483 item or a warning-letter violation), one CFR reference, one or more failure modes. Counts are citations, not documents. A failure-mode total counts each observation once: a warning-letter violation that cites three CFR sections is three citations in the CFR breakdown but one finding of that failure mode. Only tags a person reviewed and accepted are counted. When FDA revises a published document, we keep every version and count only the current one. Years are calendar years of the 483 or warning-letter issue date.</p>
+
+<h2>How citations are tagged</h2>
+<p>Text is extracted and cleaned of OCR artifacts. Rules propose tags first: CFR references, strict word-boundary patterns, and filters that drop sentences describing adequate controls, negated findings, and FDA's remediation requests. A language model then proposes tags from the taxonomy, each with a quoted evidence span that must appear in the citation. A person reviews every proposed tag before it is counted.</p>
+<p>Device citations before February 2, 2026 use QSR vocabulary; after that date FDA cites the QMSR. Both map to the same failure modes.</p>
+
+<h2>Evaluation</h2>
+<p>A gold set of hand-tagged citations is labeled blind by two taggers, who never see pipeline output, then adjudicated. We report precision and recall per failure mode. A failure mode appears in trend views only when its precision on the gold set is at least {{ "%.2f"|format(bar) }}. Modes below the bar stay in review.</p>
+{% if evals %}
+<table>
+<thead><tr><th>Failure mode</th><th class="num">Precision</th><th class="num">Recall</th><th class="num">Gold positives</th><th>Status</th></tr></thead>
+<tbody>
+{% for e in evals %}
+<tr><td><a href="/modes/{{ e.mode_id }}">{{ e.mode_id }}</a> <span class="small muted">{{ tax.modes[e.mode_id].name if e.mode_id in tax.modes else "" }}</span></td>
+<td class="num">{{ "%.2f"|format(e.precision) if e.precision is not none else "n/a" }}</td>
+<td class="num">{{ "%.2f"|format(e.recall) if e.recall is not none else "n/a" }}</td>
+<td class="num">{{ e.support }}</td>
+<td>{{ "live" if e.mode_id in allowed else "in review" }}</td></tr>
+{% endfor %}
+</tbody></table>
+{% else %}
+<div class="card muted">Gold-set evaluation has not been run yet.</div>
+{% endif %}
+
+<h2>Remediation content</h2>
+<p>Remediation patterns are written by a practitioner from public regulatory knowledge and general professional expertise. Each lists its public sources. They are not legal advice and not a compliance judgment about any firm.</p>
+{% endblock %}

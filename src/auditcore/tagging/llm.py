@@ -1,0 +1,145 @@
+"""Stage 2: LLM-assisted tagging (PRD section 7).
+
+For each citation the model proposes failure-mode tags from the taxonomy,
+each with a verbatim evidence quote. We keep a proposal only if:
+  - its mode ID is in the taxonomy (also enforced by the output schema), and
+  - its evidence quote actually occurs in the citation text.
+Everything the model proposes lands as ``status="proposed"``; nothing is
+published until a human accepts it (stage 3).
+
+The taxonomy block is the stable prefix of every request, so it is marked for
+prompt caching; only the citation text varies.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass
+from typing import Any
+
+from ..config import get_settings
+from ..taxonomy.loader import Taxonomy
+
+log = logging.getLogger(__name__)
+
+SYSTEM_PROMPT = """You tag FDA enforcement citations (Form 483 observations and warning-letter violations) with computerized-systems failure modes from a fixed taxonomy.
+
+A citation gets a tag only when the citation text states a deficiency that matches the mode's definition. Rules:
+- Tag what FDA cited, not what FDA asked the firm to do in its response. Sentences like "Your response should include..." or "We recommend..." are remediation requests; they are not findings.
+- A sentence describing an adequate or working control is not a finding.
+- Respect each mode's "Not this mode" note. When two modes fit, apply both only if the text supports each one independently.
+- Device-quality citations may use either QSR (pre February 2, 2026) or QMSR / ISO 13485 vocabulary. Map both to the same modes.
+- Matching words are not enough: "cloudy solution" is not cloud computing, "shared drive" is not a shared login.
+- Evidence must be copied verbatim from the citation text: the shortest span that shows the deficiency.
+- Confidence is your probability that a trained reviewer would accept the tag.
+- If no mode applies, return an empty list. Most citations in the corpus are not about computerized systems.
+"""
+
+
+def taxonomy_block(taxonomy: Taxonomy) -> str:
+    lines = [f"Taxonomy version {taxonomy.version}."]
+    for mode in taxonomy:
+        lines.append(f"\n{mode.id} | {taxonomy.categories[mode.category]} | {mode.name}")
+        lines.append(f"  Definition: {mode.definition}")
+        if mode.exclude:
+            lines.append(f"  Not this mode: {mode.exclude}")
+    return "\n".join(lines)
+
+
+def output_schema(taxonomy: Taxonomy) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "tags": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "mode_id": {"type": "string", "enum": sorted(taxonomy.modes)},
+                        "evidence": {"type": "string"},
+                        "confidence": {"type": "number"},
+                    },
+                    "required": ["mode_id", "evidence", "confidence"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["tags"],
+        "additionalProperties": False,
+    }
+
+
+@dataclass(frozen=True)
+class LlmTag:
+    mode_id: str
+    evidence: str
+    confidence: float
+
+
+class LlmRefusal(RuntimeError):
+    pass
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def evidence_in_text(evidence: str, text: str) -> bool:
+    ev = _norm(evidence).strip(" .\"'")
+    return bool(ev) and ev in _norm(text)
+
+
+class LlmTagger:
+    def __init__(self, taxonomy: Taxonomy, client: Any | None = None, model: str | None = None, effort: str | None = None):
+        settings = get_settings()
+        if client is None:
+            import anthropic
+
+            client = anthropic.Anthropic()
+        self.client = client
+        self.taxonomy = taxonomy
+        self.model = model or settings.llm_model
+        self.effort = effort or settings.llm_effort
+        self._system = [
+            {"type": "text", "text": SYSTEM_PROMPT},
+            {"type": "text", "text": taxonomy_block(taxonomy), "cache_control": {"type": "ephemeral"}},
+        ]
+        self._schema = output_schema(taxonomy)
+
+    def tag(self, citation_text: str, *, doc_kind: str, cfr: str | None) -> list[LlmTag]:
+        prompt = (
+            f"Document type: {'Form 483 observation' if doc_kind == '483' else 'warning letter violation'}\n"
+            f"CFR reference: {cfr or 'none cited'}\n\n"
+            f"<citation>\n{citation_text}\n</citation>"
+        )
+        response = self.client.beta.messages.create(
+            model=self.model,
+            max_tokens=4096,
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+            system=self._system,
+            output_config={"effort": self.effort, "format": {"type": "json_schema", "schema": self._schema}},
+            messages=[{"role": "user", "content": prompt}],
+        )
+        if response.stop_reason == "refusal":
+            raise LlmRefusal(f"model declined: {getattr(response, 'stop_details', None)}")
+        if response.stop_reason == "max_tokens":
+            raise RuntimeError("tagging response truncated at max_tokens")
+
+        text = next(b.text for b in response.content if b.type == "text")
+        data = json.loads(text)
+        tags: list[LlmTag] = []
+        seen: set[str] = set()
+        for item in data.get("tags", []):
+            mode_id = item.get("mode_id")
+            if mode_id not in self.taxonomy.modes or mode_id in seen:
+                continue
+            if not evidence_in_text(item.get("evidence", ""), citation_text):
+                log.info("dropping %s: evidence not found in citation", mode_id)
+                continue
+            seen.add(mode_id)
+            conf = float(item.get("confidence", 0.0))
+            tags.append(LlmTag(mode_id, item["evidence"], min(max(conf, 0.0), 1.0)))
+        return tags
