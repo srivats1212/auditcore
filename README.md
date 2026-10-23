@@ -54,7 +54,10 @@ auditcore process            # rules only (add --resegment after segmentation ch
 auditcore process --llm --llm-max 20   # rules + Claude proposals; reports tokens, cost, cost per citation
 
 # 3. Human review: nothing is counted until accepted here
-auditcore review --reviewer <you>
+auditcore review --reviewer <you>          # terminal: a/p/e/r/s/q per proposed tag
+auditcore review --reviewer <you> --amend  # change decided tags (accept, reject, paper/electronic), with a reason
+auditcore review-log                       # audit trail of every decision and change
+auditcore serve --review --reviewer <you>  # same review in a browser: http://127.0.0.1:8000/review
 
 # 4. Gold set (300 citations, double-blind)
 auditcore gold sample --n 300 --out gold_blind.csv   # text only, no pipeline output
@@ -86,7 +89,7 @@ auditcore serve
 | 6 Taxonomy v1 (65 modes, 12 categories) | `taxonomy/taxonomy_v1.yaml` |
 | 7 Rules pre-tagging (CFR, word boundaries, negation, adequacy, remediation requests) | `text/cfr.py`, `tagging/rules.py` |
 | 7 LLM tagging with evidence spans | `tagging/llm.py` |
-| 7 Human review | `tagging/review.py`, `auditcore review` |
+| 7 Human review | `tagging/review.py`, `auditcore review`, `/review` (`web/templates/review.html`) |
 | 7 Gold set, precision/recall, 0.85 gate | `evaluation/gold.py` |
 | 8 Annual stats, CFR breakdown, escalation, methodology notes | `analytics/stats.py` |
 | 9 Remediation patterns | `remediation/patterns.py`, `content/remediation/TEMPLATE.md` |
@@ -119,7 +122,10 @@ auditcore serve
   Failure-mode totals count each violation once; the CFR breakdown counts
   each section cited (approved rule). A violation is one numbered
   warning-letter violation or 483 observation. A review decision applies to
-  all sibling citations with the same text.
+  all sibling citations with the same text. Counts always read the current
+  decision: every review decision, from either interface, also rebuilds the
+  annual statistics, so reversing an accept removes the tag from every count
+  and reversing a reject adds it back (unless it is paper-only).
 - **Paper-only data integrity is not counted.** Modes marked `paper_records`
   in the taxonomy (the six DI modes and record destruction, CS-EDC-004) also
   fit findings about paper records. When a finding involves only paper
@@ -128,7 +134,27 @@ auditcore serve
   CSV columns `paper_only_*`) but no count, trend, digest, gold evaluation or
   report total includes it. The LLM sets the flag; rules set it when the
   finding text has no electronic-record cue; the reviewer can override it
-  (`p` / `e` in `auditcore review`). Taxonomy 1.1.
+  (`p` / `e` in `auditcore review` or on the review page). Taxonomy 1.1.
+- **Review decisions are reversible and audited.** `auditcore review --amend`
+  and the Decided list on the review page change an earlier decision: accept
+  to reject, reject to accept, or paper-only to electronic/hybrid and back.
+  Every decision and change is appended to `review_event` (citation, mode,
+  previous and new decision and flag, reviewer, time, interface, optional
+  reason); `auditcore review-log` prints it. Repeating the current decision is
+  a no-op and is not logged. A new machine proposal on a decided tag puts it
+  back in the queue.
+- **The review page is local only.** `auditcore serve --review --reviewer
+  <you>` adds `/review` to the web app: the queue with citation text and
+  highlighted evidence spans, mode definition, confidence, proposer, proposed
+  and current paper/electronic flag; buttons and the CLI keys (`a` `p` `e`
+  `r` `s`, plus `j`/`k` to move and `c` to open Change decision); filters by
+  mode, proposer, rules/LLM disagreement, low confidence (below 0.70) and
+  record type; progress (reviewed of total, accepted, running precision =
+  accepted / decided); 50 items per page. It refuses to start on anything but
+  127.0.0.1, is off unless `--review` is given, and has no login, so never
+  expose it. Forms carry a per-process token so other sites open in the same
+  browser cannot post decisions. It writes through the same functions as the
+  CLI, so the two always agree.
 - **The LLM sees findings, not FDA's request list.** Text from "In response
   to this letter, provide" onward is trimmed before tagging (about a quarter
   of warning-letter citation text). The stored text keeps it for search.
@@ -177,6 +203,8 @@ auditcore serve
 - **No migrations.** `auditcore init` uses `create_all`. Add Alembic before the
   schema changes under real data. A database created before taxonomy 1.1
   needs `ALTER TABLE failure_mode ADD COLUMN paper_only BOOLEAN NOT NULL DEFAULT false`.
+  The `review_event` audit table is new; `auditcore init` (or any command)
+  creates it in an existing database without touching other tables.
 - **Payments and email sending.** `/subscribe` stores an address;
   `digest publish` writes email-ready HTML. Billing and delivery are open
   decisions (PRD section 14).

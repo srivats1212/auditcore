@@ -111,35 +111,49 @@ def cmd_process(a):
         _print(run_pipeline(s, tax, tagger=LlmTagger(tax) if a.llm else None, limit=a.limit, llm_max=a.llm_max))
 
 
+def _decision_label(item, paper_capable: bool) -> str:
+    if item.decision == "accepted" and paper_capable:
+        label = "accepted" + (" as paper only" if item.decided_paper_only else " as electronic/hybrid")
+    else:
+        label = item.decision
+    if item.decision != "proposed" and item.reviewer:
+        label += f" by {item.reviewer} on {item.reviewed_at:%Y-%m-%d %H:%M}"
+    return label + (" (new proposal pending)" if item.pending and item.decision != "proposed" else "")
+
+
+def _show_item(item, mode, n: int, total: int) -> None:
+    print("\n" + "=" * 78)
+    print(f"[{n}/{total}] citation {item.citation_id}  ->  {item.mode_id} {mode.name if mode else ''}")
+    print(f"proposed by {item.sources}, confidence {item.best_confidence:.2f}")
+    if mode and mode.paper_records:
+        print(f"record type proposed: {'PAPER ONLY (not counted as computerized systems)' if item.paper_only else 'electronic or hybrid'}")
+    print(f"current decision: {_decision_label(item, bool(mode and mode.paper_records))}")
+    if mode:
+        print(f"definition: {mode.definition}")
+    for p in item.proposals:
+        if p.evidence:
+            print(f"  evidence ({p.provenance}, {p.confidence or 0:.2f}): \"{p.evidence}\"")
+    print("-" * 78)
+    print(item.text[:2500])
+
+
 def cmd_review(a):
-    from .tagging.review import decide, review_queue
+    from .tagging.review import apply_decision, review_items
     from .taxonomy.loader import load_taxonomy
 
     tax = load_taxonomy()
     reviewer = a.reviewer
     with _session() as s:
-        items = review_queue(s, mode_id=a.mode, limit=a.limit)
+        items = review_items(s, state="decided" if a.amend else "pending", mode_id=a.mode)[:a.limit]
         if not items:
-            print("review queue is empty")
+            print("no decided tags to amend" if a.amend else "review queue is empty")
             return
         for n, item in enumerate(items, 1):
             mode = tax.modes.get(item.mode_id)
-            print("\n" + "=" * 78)
-            print(f"[{n}/{len(items)}] citation {item.citation_id}  ->  {item.mode_id} {mode.name if mode else ''}")
-            print(f"proposed by {item.sources}, confidence {item.best_confidence:.2f}")
-            paper_capable = bool(mode and mode.paper_records)
-            if paper_capable:
-                print(f"record type proposed: {'PAPER ONLY (not counted as computerized systems)' if item.paper_only else 'electronic or hybrid'}")
-            if mode:
-                print(f"definition: {mode.definition}")
-            for p in item.proposals:
-                if p.evidence:
-                    print(f"  evidence ({p.provenance}): \"{p.evidence}\"")
-            print("-" * 78)
-            print(item.text[:2500])
+            _show_item(item, mode, n, len(items))
             prompt = "[a]ccept  [r]eject  [s]kip  [q]uit > "
             valid = {"a", "r", "s", "q"}
-            if paper_capable:
+            if mode and mode.paper_records:
                 prompt = "[a]ccept as proposed  [p]accept as paper only  [e]accept as electronic/hybrid  " + prompt[10:]
                 valid |= {"p", "e"}
             while True:
@@ -150,8 +164,35 @@ def cmd_review(a):
                 break
             if choice in ("a", "p", "e", "r"):
                 flag = {"p": True, "e": False}.get(choice)
-                decide(s, item.citation_id, item.mode_id, accept=choice != "r", reviewer=reviewer, paper_only=flag)
+                reason = input("reason (optional) > ").strip() if a.amend else None
+                changed = apply_decision(s, item.citation_id, item.mode_id, accept=choice != "r", reviewer=reviewer,
+                                         paper_only=flag, reason=reason, interface="cli", taxonomy_version=tax.version)
+                if a.amend and not changed:
+                    print("no change: that is already the current decision")
                 s.commit()
+
+
+def cmd_review_log(a):
+    from sqlalchemy import select
+
+    from .models import ReviewEvent
+    from .taxonomy.loader import load_taxonomy
+
+    paper_capable = {m.id for m in load_taxonomy() if m.paper_records}
+
+    def fmt(e, decision, paper):
+        if paper is None or e.mode_id not in paper_capable:
+            return decision
+        return f"{decision} ({'paper only' if paper else 'electronic/hybrid'})"
+
+    with _session() as s:
+        q = select(ReviewEvent).order_by(ReviewEvent.id.desc()).limit(a.limit)
+        if a.citation:
+            q = q.where(ReviewEvent.citation_id == a.citation)
+        for e in reversed(s.scalars(q).all()):
+            print(f"{e.created_at:%Y-%m-%d %H:%M:%S}  citation {e.citation_id:<6} {e.mode_id:11} "
+                  f"{fmt(e, e.previous_decision, e.previous_paper_only)} -> {fmt(e, e.new_decision, e.new_paper_only)}  "
+                  f"by {e.reviewer} via {e.interface}" + (f"  reason: {e.reason}" if e.reason else ""))
 
 
 def cmd_gold_sample(a):
@@ -298,8 +339,16 @@ def cmd_serve(a):
     from .db import init_db
     from .web.app import create_app
 
+    if a.review:
+        if not a.reviewer:
+            sys.exit("--review needs --reviewer <you>")
+        if a.host not in ("127.0.0.1", "localhost", "::1"):
+            sys.exit("the review page is local only: run it on 127.0.0.1")
     init_db()
-    uvicorn.run(create_app(content_dir=a.content), host=a.host, port=a.port)
+    app = create_app(content_dir=a.content, review=a.review, reviewer=a.reviewer)
+    if a.review:
+        print(f"review page: http://{a.host}:{a.port}/review (reviewer {a.reviewer})")
+    uvicorn.run(app, host=a.host, port=a.port)
 
 
 # ------------------------------------------------------------------ parser
@@ -351,7 +400,12 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--reviewer", required=True)
     x.add_argument("--mode")
     x.add_argument("--limit", type=int, default=50)
+    x.add_argument("--amend", action="store_true", help="change already-decided tags instead of reviewing new ones")
     x.set_defaults(fn=cmd_review)
+    x = sub.add_parser("review-log", help="audit trail of review decisions")
+    x.add_argument("--citation", type=int)
+    x.add_argument("--limit", type=int, default=50)
+    x.set_defaults(fn=cmd_review_log)
 
     gold = sub.add_parser("gold", help="gold-label set and evaluation").add_subparsers(dest="cmd", required=True)
     x = gold.add_parser("sample", help="stratified sample, exported blind")
@@ -414,6 +468,8 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--host", default="127.0.0.1")
     x.add_argument("--port", type=int, default=8000)
     x.add_argument("--content", default="content")
+    x.add_argument("--review", action="store_true", help="also serve the local review page at /review")
+    x.add_argument("--reviewer", help="name recorded on decisions made in the review page")
     x.set_defaults(fn=cmd_serve)
     return p
 

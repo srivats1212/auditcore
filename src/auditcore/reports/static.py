@@ -99,7 +99,7 @@ def load_rows(session: Session) -> list[Row]:
             continue
         if prov == "human" and status == "accepted":
             (r.accepted_paper if paper else r.accepted).append(mid)
-        elif prov in ("rules", "llm") and status != "rejected":
+        elif prov in ("rules", "llm") and status == "proposed":
             target = r.proposed_paper if paper else r.proposed
             if mid not in target:
                 target.append(mid)

@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block title %}Review{% endblock %}
+{% block body %}
+<style>
+.review-head { display: flex; flex-wrap: wrap; gap: 6px 24px; align-items: baseline; }
+.stats { display: flex; flex-wrap: wrap; gap: 4px 20px; font-variant-numeric: tabular-nums; }
+.stats b { font-weight: 650; }
+.tabs { display: flex; gap: 8px; margin: 12px 0; }
+.tabs a { padding: 4px 12px; border: 1px solid var(--border); border-radius: 999px; text-decoration: none; color: var(--text-secondary); }
+.tabs a.on { background: var(--accent); border-color: var(--accent); color: var(--surface-1); }
+.item { outline: none; }
+.item.focused { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.item .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.item .text { white-space: pre-wrap; max-height: 22em; overflow-y: auto; border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; margin: 8px 0; font-size: .925rem; }
+mark { background: #fbe7a1; color: #0b0b0b; padding: 0 1px; border-radius: 2px; }
+.def { font-size: .875rem; color: var(--text-secondary); margin: 4px 0; }
+.props { font-size: .875rem; margin: 6px 0; }
+.props li { margin: 2px 0; }
+.decision { font-size: .875rem; margin: 6px 0; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.actions button.secondary { background: var(--surface-1); color: var(--text-primary); border-color: var(--border); }
+.actions button.reject { background: #b3261e; border-color: #b3261e; color: #fff; }
+.actions input[name=reason] { flex: 1 1 200px; min-width: 0; }
+kbd { font: .75rem ui-monospace, monospace; border: 1px solid var(--border); border-radius: 3px; padding: 0 4px;
+  background: var(--surface-0); color: var(--text-secondary); }
+.badge { font-size: .75rem; border-radius: 4px; padding: 0 6px; background: var(--tag-bg); }
+.badge.warn { background: #fde2d4; color: #0b0b0b; }
+.history { font-size: .8rem; color: var(--text-secondary); margin: 6px 0 0; padding-left: 18px; }
+details.change > summary { cursor: pointer; display: inline-block; margin-top: 8px; padding: 4px 10px;
+  border: 1px solid var(--accent); border-radius: 6px; color: var(--accent); list-style: none; }
+details.change > summary::-webkit-details-marker { display: none; }
+.pager { display: flex; gap: 16px; align-items: baseline; }
+</style>
+
+<div class="review-head">
+  <h1>Review</h1>
+  <span class="muted small">Reviewer: <b>{{ reviewer }}</b> &middot; local only</span>
+</div>
+<div class="stats small">
+  <span>Reviewed <b>{{ progress.reviewed }}</b> of <b>{{ progress.total }}</b></span>
+  <span>Accepted <b>{{ progress.accepted }}</b></span>
+  <span>Rejected <b>{{ progress.rejected }}</b></span>
+  <span>Running precision (accepted / decided) <b>{{ "%.2f"|format(progress.precision) if progress.precision is not none else "n/a" }}</b></span>
+</div>
+
+{% set base_params = params.copy() %}
+<nav class="tabs" aria-label="Lists">
+  {% for st, label in [("pending", "To review"), ("decided", "Decided")] %}
+  {% set _ = base_params.update(state=st) %}
+  <a href="/review?{% for k, v in base_params.items() if v %}{{ k }}={{ v|urlencode }}&{% endfor %}" class="{{ 'on' if params.state == st else '' }}">{{ label }}</a>
+  {% endfor %}
+</nav>
+
+<form class="filters" method="get" action="/review">
+  <input type="hidden" name="state" value="{{ params.state }}">
+  <label>Failure mode
+    <select name="mode"><option value="">Any</option>
+      {% for m in modes %}<option value="{{ m }}" {% if params.mode == m %}selected{% endif %}>{{ m }} {{ tax.modes[m].name }}</option>{% endfor %}
+    </select></label>
+  <label>Proposed by
+    <select name="proposer"><option value="">Any</option>
+      {% for v, l in [("rules", "Rules only"), ("llm", "LLM only"), ("both", "Both")] %}
+      <option value="{{ v }}" {% if params.proposer == v %}selected{% endif %}>{{ l }}</option>{% endfor %}
+    </select></label>
+  <label>Record type
+    <select name="paper"><option value="">Any</option>
+      <option value="paper" {% if params.paper == "paper" %}selected{% endif %}>Paper only</option>
+      <option value="electronic" {% if params.paper == "electronic" %}selected{% endif %}>Electronic or hybrid</option>
+    </select></label>
+  <label><span><input type="checkbox" name="disagree" value="1" {% if params.disagree == "1" %}checked{% endif %}> Rules and LLM disagree</span></label>
+  <label><span><input type="checkbox" name="low" value="1" {% if params.low == "1" %}checked{% endif %}> Low confidence (below 0.70)</span></label>
+  <button type="submit">Filter</button>
+</form>
+
+<p class="muted small">
+  {{ total }} item{{ "" if total == 1 else "s" }} in this list{% if pages > 1 %}, page {{ page }} of {{ pages }}{% endif %}.
+  Keys: <kbd>a</kbd> accept as proposed, <kbd>p</kbd> paper only, <kbd>e</kbd> electronic/hybrid, <kbd>r</kbd> reject,
+  <kbd>s</kbd> skip, <kbd>j</kbd>/<kbd>k</kbd> next/previous{% if params.state == "decided" %}, <kbd>c</kbd> change decision{% endif %}.
+</p>
+
+{% for item in items %}
+{% set c, obs, doc = info[item.citation_id] %}
+{% set mode = tax.modes.get(item.mode_id) %}
+{% set paper_capable = mode and mode.paper_records %}
+{% set back = "/review?" ~ query ~ ("&" if query else "") ~ "page=" ~ page ~ "&focus=" ~ loop.index0 %}
+<article class="card item" tabindex="-1" data-index="{{ loop.index0 }}" id="item-{{ loop.index0 }}"
+         {% if params.state == "decided" %}data-locked="1"{% endif %}>
+  <div class="meta small muted">
+    <span>Citation {{ item.citation_id }}</span>
+    <span>{{ "Form 483" if obs.kind == "483" else "Warning letter" }} &middot; observation {{ obs.number }}</span>
+    {% if c.cfr_reference %}<span>{{ c.cfr_reference.canonical }}</span>{% endif %}
+    {% if obs.observed_date %}<span>{{ obs.observed_date.isoformat() }}</span>{% endif %}
+    {% if doc.source_url %}<a href="{{ doc.source_url }}" rel="noopener" target="_blank">source</a>{% endif %}
+  </div>
+  <h2 style="margin:6px 0 2px">{{ item.mode_id }} {{ mode.name if mode else "" }}
+    {% if item.disagreement %}<span class="badge warn">rules and LLM disagree</span>{% endif %}</h2>
+  {% if mode %}<div class="def">{{ mode.definition }}{% if mode.exclude %} <i>Not this mode:</i> {{ mode.exclude }}{% endif %}</div>{% endif %}
+  <ul class="props">
+    {% for p in item.proposals %}
+    <li><b>{{ "Rules" if p.provenance == "rules" else "LLM" }}</b>, confidence {{ "%.2f"|format(p.confidence or 0) }}{% if paper_capable %}, {{ "paper only" if p.paper_only else "electronic or hybrid" }}{% endif %}{% if p.evidence %}: &ldquo;{{ p.evidence }}&rdquo;{% endif %}</li>
+    {% endfor %}
+  </ul>
+  <div class="decision">
+    Proposed by <b>{{ item.sources }}</b>{% if paper_capable %}, record type proposed: <b>{{ "paper only (not counted)" if item.paper_only else "electronic or hybrid" }}</b>{% endif %}.
+    Current decision:
+    {% if item.decision == "accepted" %}<b>accepted{% if paper_capable %} as {{ "paper only" if item.decided_paper_only else "electronic/hybrid" }}{% endif %}</b>
+    {% elif item.decision == "rejected" %}<b>rejected</b>
+    {% else %}<b>none yet</b>{% endif %}
+    {% if item.decision != "proposed" and item.reviewer %} by {{ item.reviewer }}, {{ item.reviewed_at.strftime("%Y-%m-%d %H:%M") }} UTC{% endif %}
+    {% if item.pending and item.decision != "proposed" %} <span class="badge">new proposal since</span>{% endif %}
+  </div>
+  <div class="text">{{ marked[(item.citation_id, item.mode_id)] }}</div>
+  {% set events = history[(item.citation_id, item.mode_id)] %}
+  {% if events %}
+  <ul class="history">
+    {% for e in events %}
+    <li>{{ e.created_at.strftime("%Y-%m-%d %H:%M") }}: {{ e.previous_decision }}{% if paper_capable and e.previous_paper_only is not none %} ({{ "paper" if e.previous_paper_only else "electronic" }}){% endif %}
+      to {{ e.new_decision }}{% if paper_capable and e.new_paper_only is not none %} ({{ "paper" if e.new_paper_only else "electronic" }}){% endif %}
+      by {{ e.reviewer }} via {{ e.interface }}{% if e.reason %}: {{ e.reason }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% set buttons %}
+  <form class="actions" method="post" action="/review/decide">
+    <input type="hidden" name="citation_id" value="{{ item.citation_id }}">
+    <input type="hidden" name="mode_id" value="{{ item.mode_id }}">
+    <input type="hidden" name="csrf" value="{{ token }}">
+    <input type="hidden" name="back" value="{{ back }}">
+    <button name="action" value="a" data-key="a">Accept as proposed <kbd>a</kbd></button>
+    {% if paper_capable %}
+    <button name="action" value="p" data-key="p" class="secondary">Accept as paper only <kbd>p</kbd></button>
+    <button name="action" value="e" data-key="e" class="secondary">Accept as electronic/hybrid <kbd>e</kbd></button>
+    {% endif %}
+    <button name="action" value="r" data-key="r" class="reject">Reject <kbd>r</kbd></button>
+    <button type="button" data-key="s" class="secondary skip">Skip <kbd>s</kbd></button>
+    <input name="reason" placeholder="Reason (optional)" aria-label="Reason (optional)">
+  </form>
+  {% endset %}
+  {% if params.state == "decided" %}
+  <details class="change"><summary>Change decision <kbd>c</kbd></summary>{{ buttons }}</details>
+  {% else %}
+  {{ buttons }}
+  {% endif %}
+</article>
+{% else %}
+<div class="card muted">{{ "Nothing left to review with these filters." if params.state == "pending" else "No decided items with these filters." }}</div>
+{% endfor %}
+
+{% if pages > 1 %}
+<div class="pager">
+  {% if page > 1 %}<a href="/review?{{ query }}{{ '&' if query }}page={{ page-1 }}">Previous page</a>{% endif %}
+  {% if page < pages %}<a href="/review?{{ query }}{{ '&' if query }}page={{ page + 1 }}">Next page</a>{% endif %}
+</div>
+{% endif %}
+
+<script>
+(function () {
+  var cards = Array.prototype.slice.call(document.querySelectorAll("article.item"));
+  if (!cards.length) return;
+  var current = 0;
+  function focusCard(i, scroll) {
+    if (i < 0 || i >= cards.length) return;
+    cards[current].classList.remove("focused");
+    current = i;
+    cards[i].classList.add("focused");
+    if (scroll) cards[i].scrollIntoView({block: "nearest"});
+  }
+  var start = Math.min({{ focus|int }}, cards.length-1);
+  focusCard(start, start > 0);
+  cards.forEach(function (card, i) {
+    card.addEventListener("click", function () { focusCard(i, false); });
+    var skip = card.querySelector("button.skip");
+    if (skip) skip.addEventListener("click", function (ev) { ev.stopPropagation(); focusCard(i + 1, true); });
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    var t = ev.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) return;
+    var key = ev.key.toLowerCase();
+    var card = cards[current];
+    if (key === "j") { focusCard(current + 1, true); return; }
+    if (key === "k") { focusCard(current-1, true); return; }
+    var panel = card.querySelector("details.change");
+    if (key === "c" && panel) { panel.open = !panel.open; return; }
+    if (panel && !panel.open) return;
+    if (key === "s") { focusCard(current + 1, true); return; }
+    var button = card.querySelector('form.actions button[data-key="' + key + '"]');
+    if (!button) return;
+    ev.preventDefault();
+    var form = button.form;
+    if (form.requestSubmit) form.requestSubmit(button); else button.click();
+  });
+})();
+</script>
+{% endblock %}

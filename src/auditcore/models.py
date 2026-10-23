@@ -253,6 +253,26 @@ class FailureMode(Base):
     citation: Mapped[Citation] = relationship(back_populates="tags")
 
 
+class ReviewEvent(Base):
+    """Audit trail of review decisions, one row per change to a
+    (citation, mode) decision, including the first one. Append-only: the
+    current decision lives on ``failure_mode``; this records how it got there."""
+
+    __tablename__ = "review_event"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    citation_id: Mapped[int] = mapped_column(ForeignKey("citation.id"), index=True)
+    mode_id: Mapped[str] = mapped_column(String(32), index=True)
+    previous_decision: Mapped[str] = mapped_column(String(16))  # proposed | accepted | rejected
+    previous_paper_only: Mapped[bool | None] = mapped_column(Boolean)  # None unless previously accepted
+    new_decision: Mapped[str] = mapped_column(String(16))  # accepted | rejected
+    new_paper_only: Mapped[bool | None] = mapped_column(Boolean)  # None when rejected
+    reviewer: Mapped[str] = mapped_column(String(64))
+    reason: Mapped[str | None] = mapped_column(Text)
+    interface: Mapped[str] = mapped_column(String(8), default="cli")  # cli | web
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class GoldLabel(Base):
     """Blind hand labels. One row per (citation, tagger). Kept apart from the
     review queue: nothing in the pipeline reads this table except evaluation."""

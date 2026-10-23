@@ -3,18 +3,24 @@ pages, digest archive, methodology. No accounts beyond a subscribe form.
 
 Gate: a failure mode's trend, counts, and tags are public only when its
 gold-set precision meets the bar. Everything else shows as "in review".
+
+With ``review=True`` (``auditcore serve --review``) the app also serves a
+local review page at /review. It is off by default so the public site never
+exposes it, and writes through the same functions as ``auditcore review``.
 """
 
 from __future__ import annotations
 
 import re
+import secrets
+from urllib.parse import urlencode
 from datetime import date
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from markupsafe import Markup
+from markupsafe import Markup, escape
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -25,15 +31,41 @@ from ..digest.build import archive, read_issue, render_issue_html
 from ..evaluation.gold import passing_modes
 from ..models import CfrReference, Citation, Document, Facility, FailureMode, ModeEvaluation, Observation, Subscriber
 from ..remediation.patterns import load_patterns
+from ..tagging.review import apply_decision, history, progress, review_items
 from ..taxonomy.loader import Taxonomy, load_taxonomy
 from .charts import SERIES, trend_svg
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+REVIEW_PER_PAGE = 50  # matches the CLI review default
+_ACTIONS = {"a": (True, None), "p": (True, True), "e": (True, False), "r": (False, None)}
+
+
+def highlight(text: str, spans: list[str]) -> Markup:
+    """Citation text with each evidence span marked. Spans match the way the
+    tagger checks evidence: case-insensitive, any run of whitespace."""
+    ranges = []
+    for span in spans:
+        words = (span or "").strip(" .\"'").split()
+        if words:
+            pattern = r"\s+".join(re.escape(w) for w in words)
+            ranges += [(m.start(), m.end()) for m in re.finditer(pattern, text, re.IGNORECASE)]
+    merged: list[list[int]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    out, pos = [], 0
+    for start, end in merged:
+        out += [escape(text[pos:start]), Markup("<mark>"), escape(text[start:end]), Markup("</mark>")]
+        pos = end
+    out.append(escape(text[pos:]))
+    return Markup("").join(out)
 
 
 def create_app(*, database_url: str | None = None, content_dir: Path | str = "content",
-               taxonomy: Taxonomy | None = None) -> FastAPI:
+               taxonomy: Taxonomy | None = None, review: bool = False, reviewer: str | None = None) -> FastAPI:
     app = FastAPI(title="Computerized-Systems Enforcement Intelligence", docs_url=None, redoc_url=None)
     engine = get_engine(database_url)
     tax = taxonomy or load_taxonomy()
@@ -48,7 +80,7 @@ def create_app(*, database_url: str | None = None, content_dir: Path | str = "co
         return passing_modes(s, tax.version, bar=settings.precision_bar)
 
     def render(request: Request, name: str, **ctx):
-        return TEMPLATES.TemplateResponse(request, name, {"tax": tax, **ctx})
+        return TEMPLATES.TemplateResponse(request, name, {"tax": tax, "review_enabled": review, **ctx})
 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request, s: Session = Depends(db)):
@@ -171,4 +203,53 @@ def create_app(*, database_url: str | None = None, content_dir: Path | str = "co
             s.commit()
         return RedirectResponse("/?subscribed=1", status_code=303)
 
+    if review:
+        if not reviewer:
+            raise ValueError("the review page needs a reviewer name")
+        _add_review_routes(app, db, render, tax, reviewer)
     return app
+
+
+def _add_review_routes(app: FastAPI, db, render, tax: Taxonomy, reviewer: str) -> None:
+    # Per-process token on every form: no login, but another site open in the
+    # same browser cannot post decisions to this page.
+    token = secrets.token_urlsafe(16)
+
+    @app.get("/review", response_class=HTMLResponse)
+    def review_page(request: Request, state: str = "pending", mode: str = "", proposer: str = "",
+                    disagree: str = "", low: str = "", paper: str = "", page: int = 1, focus: int = 0,
+                    s: Session = Depends(db)):
+        state = state if state in ("pending", "decided") else "pending"
+        items = review_items(s, state=state, mode_id=mode or None, proposer=proposer or None,
+                             disagreements=disagree == "1", low_confidence=low == "1", paper=paper or None)
+        pages = max(1, -(-len(items) // REVIEW_PER_PAGE))
+        page = min(max(page, 1), pages)
+        shown = items[(page - 1) * REVIEW_PER_PAGE: page * REVIEW_PER_PAGE]
+        params = dict(state=state, mode=mode, proposer=proposer, disagree=disagree, low=low, paper=paper)
+        query = urlencode({k: v for k, v in params.items() if v})
+        info = {}
+        for i in shown:
+            c = s.get(Citation, i.citation_id)
+            info[i.citation_id] = (c, c.observation, c.observation.document)
+        return render(request, "review.html", items=shown, total=len(items), page=page, pages=pages,
+                      params=params, query=query, focus=focus, progress=progress(s), reviewer=reviewer,
+                      token=token, info=info, modes=sorted(tax.modes),
+                      history={(i.citation_id, i.mode_id): history(s, i.citation_id, i.mode_id) for i in shown},
+                      marked={(i.citation_id, i.mode_id): highlight(i.text, [p.evidence for p in i.proposals])
+                              for i in shown})
+
+    @app.post("/review/decide")
+    def review_decide(citation_id: int = Form(...), mode_id: str = Form(...), action: str = Form(...),
+                      reason: str = Form(""), csrf: str = Form(""), back: str = Form("/review"),
+                      s: Session = Depends(db)):
+        if not secrets.compare_digest(csrf, token):
+            raise HTTPException(403, "Stale or missing form token. Reload the review page.")
+        if action not in _ACTIONS or mode_id not in tax.modes or s.get(Citation, citation_id) is None:
+            raise HTTPException(400, "Unknown citation, mode or action.")
+        accept, flag = _ACTIONS[action]
+        apply_decision(s, citation_id, mode_id, accept=accept, paper_only=flag, reviewer=reviewer,
+                       reason=reason, interface="web", taxonomy_version=tax.version)
+        s.commit()
+        if not back.startswith("/review") or back.startswith("//"):
+            back = "/review"
+        return RedirectResponse(back, status_code=303)

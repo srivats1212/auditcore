@@ -69,7 +69,7 @@ button { cursor: pointer; background: var(--accent); color: var(--surface-1); bo
 <body>
 <header><div class="wrap">
   <a class="brand" href="/">CS Enforcement Intelligence</a>
-  <nav><a href="/search">Search</a> &nbsp; <a href="/modes">Failure modes</a> &nbsp; <a href="/digest">Digest</a> &nbsp; <a href="/methodology">Methodology</a></nav>
+  <nav><a href="/search">Search</a> &nbsp; <a href="/modes">Failure modes</a> &nbsp; <a href="/digest">Digest</a> &nbsp; <a href="/methodology">Methodology</a>{% if review_enabled %} &nbsp; <a href="/review">Review</a>{% endif %}</nav>
 </div></header>
 <main class="wrap">
 {% block body %}{% endblock %}
