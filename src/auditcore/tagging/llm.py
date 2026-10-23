@@ -71,9 +71,12 @@ def output_schema(taxonomy: Taxonomy) -> dict[str, Any]:
     }
 
 
-# USD per million tokens: input, output, cache read, 5-minute cache write.
-# Fallback models are listed because a refusal fallback bills at their rates.
+# USD per million tokens: input, output, cache read, 5-minute cache write
+# (1.25x input). Fallback models are listed because a refusal fallback bills
+# at their rates: Sonnet 5.5's default fallback is Sonnet 5.
 PRICES: dict[str, tuple[float, float, float, float]] = {
+    "claude-sonnet-5-5": (2.00, 10.00, 0.20, 2.50),
+    "claude-sonnet-5": (2.00, 10.00, 0.20, 2.50),
     "claude-opus-5-5": (4.00, 20.00, 0.20, 5.00),
     "claude-opus-5": (5.00, 25.00, 0.50, 6.25),
     "claude-opus-4-8": (5.00, 25.00, 0.50, 6.25),

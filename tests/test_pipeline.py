@@ -84,18 +84,19 @@ class TestLlm:
             return fake_response(json.dumps({"tags": []}))
 
         client = fake_client_factory(responder)
-        tagger = LlmTagger(taxonomy, client=client, model="claude-opus-5-5", effort="medium")
+        tagger = LlmTagger(taxonomy, client=client, model="claude-sonnet-5-5", effort="medium")
         stats = run_pipeline(session, taxonomy, tagger=tagger)
         assert stats["llm_errors"] == 0 and stats["llm_tags"] == 1
 
         call = client.messages.calls[0]
-        assert call["model"] == "claude-opus-5-5"
+        assert call["model"] == "claude-sonnet-5-5"
+        assert call["output_config"]["effort"] == "medium"  # explicit: Sonnet 5.5 defaults to high
         assert call["fallbacks"] == "default" and "server-side-fallback-2026-07-01" in call["betas"]
         assert call["output_config"]["format"]["type"] == "json_schema"
         assert call["system"][-1]["cache_control"] == {"type": "ephemeral"}  # taxonomy prefix is cached
 
         spr = session.scalars(select(FailureMode).where(FailureMode.provenance == "llm", FailureMode.mode_id == "CS-SPR-001")).one()
-        assert spr.status == "proposed" and spr.model == "claude-opus-5-5"
+        assert spr.status == "proposed" and spr.model == "claude-sonnet-5-5"
         assert not session.scalars(select(FailureMode).where(FailureMode.mode_id == "CS-DI-005")).first()
 
         # Second run does not call the model again for citations already tagged.
@@ -245,7 +246,7 @@ def test_usage_and_cost_accounting(taxonomy, fake_client_factory, fake_response)
         r = fake_response(json.dumps({"tags": []}))
         first = not responder.seen
         responder.seen = True
-        r.model = "claude-opus-5-5"
+        r.model = "claude-sonnet-5-5"
         r.usage = SimpleNamespace(input_tokens=300, output_tokens=200,
                                   cache_creation_input_tokens=5000 if first else 0,
                                   cache_read_input_tokens=0 if first else 5000)
@@ -257,9 +258,9 @@ def test_usage_and_cost_accounting(taxonomy, fake_client_factory, fake_response)
         tagger.tag("Audit trails were not reviewed.", doc_kind="wl", cfr=None)
     u = tagger.usage.as_dict()
     assert u["calls"] == 3 and u["cache_write_tokens"] == 5000 and u["cache_read_tokens"] == 10000
-    # 900 in x $4 + 600 out x $20 + 5000 write x $5 + 10000 read x $0.20, per million
-    assert u["cost_usd"] == round((900 * 4 + 600 * 20 + 5000 * 5 + 10000 * 0.2) / 1e6, 4)
-    assert u["models"] == {"claude-opus-5-5": 3}
+    # 900 in x $2 + 600 out x $10 + 5000 write x $2.50 + 10000 read x $0.20, per million
+    assert u["cost_usd"] == round((900 * 2 + 600 * 10 + 5000 * 2.5 + 10000 * 0.2) / 1e6, 4)
+    assert u["models"] == {"claude-sonnet-5-5": 3}
 
 
 def test_llm_max_caps_calls(session, loaded, taxonomy, fake_client_factory, fake_response):
@@ -279,3 +280,14 @@ def test_resegment_clears_machine_rows_but_refuses_after_review(session, loaded,
     decide(session, fm.citation_id, fm.mode_id, accept=True, reviewer="sk")
     with pytest.raises(ResegmentRefused):
         clear_segmentation(session)
+
+
+def test_default_tagging_model_is_sonnet_5_5(monkeypatch):
+    from auditcore.config import get_settings
+    from auditcore.tagging.llm import PRICES
+
+    monkeypatch.delenv("AUDITCORE_LLM_MODEL", raising=False)
+    monkeypatch.delenv("AUDITCORE_LLM_EFFORT", raising=False)
+    s = get_settings()
+    assert (s.llm_model, s.llm_effort) == ("claude-sonnet-5-5", "medium")
+    assert s.llm_model in PRICES and "claude-sonnet-5" in PRICES  # model and its fallback are priced

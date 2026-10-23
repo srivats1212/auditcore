@@ -36,7 +36,7 @@ class Settings:
     )
     request_delay_s: float = field(default_factory=lambda: float(_env("AUDITCORE_REQUEST_DELAY_S", "1.0")))
 
-    llm_model: str = field(default_factory=lambda: _env("AUDITCORE_LLM_MODEL", "claude-opus-5-5"))
+    llm_model: str = field(default_factory=lambda: _env("AUDITCORE_LLM_MODEL", "claude-sonnet-5-5"))
     llm_effort: str = field(default_factory=lambda: _env("AUDITCORE_LLM_EFFORT", "medium"))
 
     # Trend views hide any failure mode whose gold-set precision is below this bar (PRD section 7).

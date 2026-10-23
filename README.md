@@ -131,7 +131,8 @@ auditcore serve
 - **483 PDFs are cropped to the observations area** on each page, so the
   repeated header and signature footer never splice into an observation that
   crosses a page break. The FEI is read from the first page header.
-- **LLM.** Claude (`claude-opus-5-5`, effort `medium`) with JSON-schema output
+- **LLM.** Claude Sonnet 5.5 (`claude-sonnet-5-5`, effort `medium`; override with
+  `AUDITCORE_LLM_MODEL` / `AUDITCORE_LLM_EFFORT`) with JSON-schema output
   constrained to taxonomy IDs, the taxonomy as a cached system-prompt prefix,
   and server-side refusal fallback enabled. A proposed tag is dropped unless
   its evidence quote appears in the citation text.
