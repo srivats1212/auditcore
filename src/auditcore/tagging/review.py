@@ -44,16 +44,37 @@ def review_queue(session: Session, *, mode_id: str | None = None, limit: int = 5
             grouped.popitem()
             break
     items = []
+    seen: set[tuple[int, str, str]] = set()
     for (cid, mid), props in grouped.items():
         citation = session.get(Citation, cid)
-        items.append(ReviewItem(cid, mid, citation.text if citation else "", props))
+        if citation is None:
+            continue
+        key = (citation.observation_id, citation.text, mid)
+        if key in seen:  # sibling citation; decide() covers it
+            continue
+        seen.add(key)
+        items.append(ReviewItem(cid, mid, citation.text, props))
     # Agreement between rules and LLM first: fastest to clear, most likely correct.
     items.sort(key=lambda i: (-len({p.provenance for p in i.proposals}), -i.best_confidence))
     return items
 
 
 def decide(session: Session, citation_id: int, mode_id: str, *, accept: bool, reviewer: str,
-           evidence: str | None = None) -> None:
+           evidence: str | None = None, _siblings: bool = True) -> None:
+    """Accept or reject one (citation, mode). The same decision applies to
+    sibling citations of the same observation with identical text (one per
+    cited CFR section), so a reviewer decides each finding once."""
+    if _siblings:
+        citation = session.get(Citation, citation_id)
+        if citation is not None:
+            siblings = session.scalars(select(Citation.id).where(
+                Citation.observation_id == citation.observation_id, Citation.text == citation.text,
+                Citation.id != citation_id)).all()
+            for sid in siblings:
+                has = session.scalars(select(FailureMode.id).where(
+                    FailureMode.citation_id == sid, FailureMode.mode_id == mode_id)).first()
+                if has is not None or accept:
+                    decide(session, sid, mode_id, accept=accept, reviewer=reviewer, evidence=evidence, _siblings=False)
     now = utcnow()
     proposals = session.scalars(
         select(FailureMode).where(FailureMode.citation_id == citation_id, FailureMode.mode_id == mode_id)

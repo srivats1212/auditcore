@@ -1,0 +1,62 @@
+{
+ "draw": 1,
+ "recordsTotal": 5,
+ "recordsFiltered": 5,
+ "data": [
+  [
+   "<time datetime=\"2026-09-11T00:53:00Z\">09/10/2026</time>\n",
+   "Victory Medical Center Pharmacy",
+   "3010485868",
+   "<a href=\"/media/195803/download\">483</a>",
+   "Texas",
+   "",
+   "Producer of Sterile and Non Sterile Drug Products",
+   "<time datetime=\"2026-10-21T13:52:21Z\">10/21/2026</time>\n",
+   ""
+  ],
+  [
+   "<time datetime=\"2026-09-10T00:44:00Z\">09/09/2026</time>\n",
+   "Greenwich Rx",
+   "3043120213",
+   "<a href=\"/media/195802/download\">483</a>",
+   "Texas",
+   "",
+   "Producer of Sterile and Non Sterile Drug Products",
+   "<time datetime=\"2026-10-21T13:47:53Z\">10/21/2026</time>\n",
+   ""
+  ],
+  [
+   "<time datetime=\"2026-09-08T07:53:00Z\">09/08/2026</time>\n",
+   "Right Value Drug Stores LLC",
+   "3010589333",
+   "<a href=\"/media/195071/download\">483</a>",
+   "Texas",
+   "",
+   "Outsourcing Facility",
+   "<time datetime=\"2026-09-30T13:45:08Z\">09/30/2026</time>\n",
+   ""
+  ],
+  [
+   "<time datetime=\"2026-09-03T21:09:00Z\">09/03/2026</time>\n",
+   "RC Outsourcing LLC",
+   "3011967886",
+   "<a href=\"/media/195189/download\">483</a>",
+   "Ohio",
+   "",
+   "Outsourcing Facility",
+   "<time datetime=\"2026-10-06T14:07:37Z\">10/06/2026</time>\n",
+   ""
+  ],
+  [
+   "<time>09/01/2026</time>",
+   "Some Firm",
+   "3000000001",
+   "<a href=\"/media/1/download\">EIR</a>",
+   "",
+   "",
+   "",
+   "",
+   ""
+  ]
+ ]
+}

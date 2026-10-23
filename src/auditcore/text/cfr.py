@@ -25,12 +25,12 @@ _SECTION = rf"\d{{1,4}}\.\d{{1,4}}{_PARA}"
 _ANCHORED = re.compile(
     rf"21\s*C\.?\s*F\.?\s*R\.?\s*(?:§§?|sections?|parts?)?\s*"
     rf"(?P<list>(?:{_SECTION}|\d{{1,4}}(?:\s*,?\s*subpart\s+[A-Z])?)"
-    rf"(?:\s*(?:,|and|or|&)\s*(?:§§?\s*)?(?:{_SECTION}))*)",
+    rf"(?:\s*(?:,\s*(?:and|or)?|and|or|&)\s*(?:§§?\s*)?(?:{_SECTION}|\([a-z0-9]{{1,4}}\)(?:\([a-z0-9]{{1,4}}\))*))*)",
     re.IGNORECASE,
 )
 # Bare section-sign form: "§ 211.192", "§§ 211.188 and 211.192".
 _SECTION_SIGN = re.compile(
-    rf"§§?\s*(?P<list>{_SECTION}(?:\s*(?:,|and|or|&)\s*(?:§\s*)?{_SECTION})*)"
+    rf"§§?\s*(?P<list>{_SECTION}(?:\s*(?:,\s*(?:and|or)?|and|or|&)\s*(?:§\s*)?(?:{_SECTION}|\([a-z0-9]{{1,4}}\)(?:\([a-z0-9]{{1,4}}\))*))*)"
 )
 _ONE_SECTION = re.compile(rf"(?P<sec>\d{{1,4}}\.\d{{1,4}})(?P<para>{_PARA})")
 _PART_ONLY = re.compile(r"^(?P<part>\d{1,4})\b")
@@ -74,11 +74,26 @@ def regime_for(part: str, on: date | None) -> str | None:
     return regime
 
 
+_LIST_TOKEN = re.compile(rf"(?P<sec>\d{{1,4}}\.\d{{1,4}})(?P<para>{_PARA})|(?<![\w)])(?P<bare>(?:\([a-z0-9]{{1,4}}\))+)")
+
+
 def _expand(list_text: str, base: int, start: int, end: int) -> list[CfrRef]:
-    refs = [
-        CfrRef(m.group("sec").split(".")[0], m.group("sec"), m.group("para") or None, start, end)
-        for m in _ONE_SECTION.finditer(list_text)
-    ]
+    """Expand a reference list. A bare paragraph after a section ("211.22(a)
+    and (d)") belongs to that section."""
+    refs: list[CfrRef] = []
+    last_sec: str | None = None
+    last_para: list[str] = []
+    for m in _LIST_TOKEN.finditer(list_text):
+        if m.group("sec"):
+            last_sec = m.group("sec")
+            last_para = re.findall(r"\([a-z0-9]+\)", m.group("para") or "")
+            refs.append(CfrRef(last_sec.split(".")[0], last_sec, m.group("para") or None, start, end))
+        elif last_sec is not None:
+            # "(a)(4) and (8)" means (a)(8): the bare part replaces the same
+            # number of trailing levels of the previous reference.
+            bare = re.findall(r"\([a-z0-9]+\)", m.group("bare"))
+            para = last_para[: max(0, len(last_para) - len(bare))] + bare
+            refs.append(CfrRef(last_sec.split(".")[0], last_sec, "".join(para), start, end))
     if not refs:
         part = _PART_ONLY.match(list_text.strip())
         if part:

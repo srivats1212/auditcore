@@ -38,7 +38,7 @@ def _month_bounds(year: int, month: int) -> tuple[date, date]:
 def monthly_counts(session: Session, taxonomy_version: str, start: date, end: date,
                    allowed: set[str] | None) -> dict[str, int]:
     rows = session.execute(
-        select(FailureMode.mode_id, Citation.id)
+        select(FailureMode.mode_id, Citation.observation_id)
         .join(Citation, FailureMode.citation_id == Citation.id)
         .join(Observation, Citation.observation_id == Observation.id)
         .join(Document, Observation.document_id == Document.id)

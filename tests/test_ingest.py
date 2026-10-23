@@ -80,6 +80,8 @@ class TestWarningLetters:
     def test_cms_from_url(self):
         assert cms_from_url(WL_URL) == "699001"
         assert cms_from_url("https://www.fda.gov/foo") is None
+        assert cms_from_url("/warning-letters/kellin-chemicals-co-ltd-716228-zhangjiagang") == "716228"
+        assert cms_from_url("/warning-letters/excelvision-726714-fareva") == "726714"
 
     def test_parse_index_uses_hyperlink(self):
         rows = parse_index_xlsx(_index_xlsx())
@@ -94,7 +96,7 @@ class TestWarningLetters:
     def test_ingest_index_end_to_end(self, session, archive, wl_html):
         fetcher = FakeFetcher({WL_URL: wl_html})
         out = ingest_index(session, archive, fetcher, _index_xlsx())
-        assert out == {"rows": 2, "fetched": 1, "errors": 1}  # the row without CMS is recorded as an error
+        assert out == {"rows": 2, "matched": 1, "fetched": 1, "errors": 1}  # the row without CMS is recorded as an error
         wl = session.scalars(select(WarningLetter)).one()
         assert wl.document is not None and wl.document.text_clean
         assert wl.facility.fei == "3009990001"

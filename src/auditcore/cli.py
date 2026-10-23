@@ -47,11 +47,14 @@ def cmd_init(a):
 
 
 def cmd_ingest_wl(a):
-    from .ingest.warning_letters import ingest_index
+    from .ingest.warning_letters import ingest_index, ingest_listing
 
+    opts = dict(fetch_letters=not a.no_fetch, limit=a.limit, subject=a.subject, refetch=a.refetch)
     with _session() as s:
-        _print(ingest_index(s, _archive(), None if a.no_fetch else _fetcher(), Path(a.xlsx).read_bytes(),
-                            source_url=a.source_url, fetch_letters=not a.no_fetch, limit=a.limit))
+        if a.xlsx:
+            _print(ingest_index(s, _archive(), None if a.no_fetch else _fetcher(), Path(a.xlsx).read_bytes(), **opts))
+        else:
+            _print(ingest_listing(s, _archive(), _fetcher(), max_rows=a.max_rows, **opts))
 
 
 def cmd_ingest_wl_files(a):
@@ -65,7 +68,7 @@ def cmd_ingest_483(a):
     from .ingest.form483 import ingest_reading_room
 
     with _session() as s:
-        _print(ingest_reading_room(s, _archive(), _fetcher(), listing_url=a.url, limit=a.limit))
+        _print(ingest_reading_room(s, _archive(), _fetcher(), listing_url=a.url, limit=a.limit, max_rows=a.max_rows))
 
 
 def cmd_ingest_483_files(a):
@@ -287,18 +290,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("init", help="create tables and load taxonomy").set_defaults(fn=cmd_init)
 
     ing = sub.add_parser("ingest", help="fetch and archive source documents").add_subparsers(dest="cmd", required=True)
-    x = ing.add_parser("wl", help="warning-letter XLSX index, then letter pages")
-    x.add_argument("xlsx")
-    x.add_argument("--source-url")
+    x = ing.add_parser("wl", help="Warning Letters listing (newest first), then letter pages")
+    x.add_argument("--xlsx", help="offline: an XLSX index that includes letter links")
+    x.add_argument("--subject", help='only letters whose subject contains this, e.g. "CGMP"')
+    x.add_argument("--max-rows", type=int, help="stop paging the listing after this many rows")
+    x.add_argument("--limit", type=int, help="fetch at most this many letters this run")
+    x.add_argument("--refetch", action="store_true", help="re-fetch stored letters to detect revisions")
     x.add_argument("--no-fetch", action="store_true", help="index only, do not fetch letter pages")
-    x.add_argument("--limit", type=int)
     x.set_defaults(fn=cmd_ingest_wl)
     x = ing.add_parser("wl-files", help="saved letter HTML files named <CMS>.html")
     x.add_argument("paths", nargs="+")
     x.set_defaults(fn=cmd_ingest_wl_files)
     x = ing.add_parser("483", help="OII reading room listing and PDFs")
     x.add_argument("--url")
-    x.add_argument("--limit", type=int)
+    x.add_argument("--max-rows", type=int, help="stop paging the listing after this many rows")
+    x.add_argument("--limit", type=int, help="download at most this many PDFs this run")
     x.set_defaults(fn=cmd_ingest_483)
     x = ing.add_parser("483-files", help="saved 483 PDFs, optional CSV manifest")
     x.add_argument("paths", nargs="+")

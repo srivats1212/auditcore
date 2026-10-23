@@ -90,10 +90,28 @@ def strip_page_furniture(text: str) -> str:
     return text
 
 
+# Whole-word misreads seen in reading-room 483s. Only words that are not
+# themselves English words, so a fix can never change meaning.
+_WORD_FIXES = {
+    "fnm": "firm", "fum": "firm", "finn": "firm", "fiim": "firm", "fmn": "firm",
+    "diug": "drug", "diugs": "drugs", "di11g": "drug", "di11gs": "drugs", "dmg": "drug", "dmgs": "drugs",
+    "conti-ol": "control", "conti-ols": "controls", "contiol": "control", "contiols": "controls",
+    "instmment": "instrument", "instmments": "instruments", "aheady": "already",
+    "detemiination": "determination", "detennination": "determination", "in1plemented": "implemented",
+}
+_WORD_FIX_RE = re.compile(r"\b(" + "|".join(re.escape(w) for w in sorted(_WORD_FIXES, key=len, reverse=True)) + r")\b")
+# "1" read for "r" inside a lowercase word: perfo1med, Laborato1y, obse1ved.
+_ONE_FOR_R = re.compile(r"(?<=[a-z])1(?=[a-z])")
+# Missing space after short function words: "ofyour", "ifyou", "ofthe".
+_GLUED = re.compile(r"\b(of|if|in|on|to)(your|you|the|this|these|those|their|its)\b")
+
+
 def apply_ocr_fixes(text: str) -> str:
     for pattern, repl in _OCR_FIXES:
         text = pattern.sub(repl, text)
-    return text
+    text = _ONE_FOR_R.sub("r", text)
+    text = _GLUED.sub(r"\1 \2", text)
+    return _WORD_FIX_RE.sub(lambda m: _WORD_FIXES[m.group(1)], text)
 
 
 def unwrap_lines(text: str) -> str:

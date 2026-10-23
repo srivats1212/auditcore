@@ -415,7 +415,8 @@ modes:
     cfr: ["21 CFR 211.180", "21 CFR 211.188", "21 CFR 211.194"]
     related: [CS-DI-001, CS-LAB-003]
     rules:
-      - (records?|documents?|worksheets?|data)[^.]{0,40}(found )?(in (the )?(trash|waste|garbage|recycling|shred\w*)|discarded|destroyed)
+      - (records?|documents?|worksheets?|printouts?|logbooks?|batch record pages?)[^.]{0,20}(found )?in (the )?(trash|waste|garbage|recycling|shred\w*)
+      - (records?|documents?|worksheets?|printouts?|logbooks?|pages) (were|was|had been|being) (discarded|destroyed|shredded|torn)
       - (shredd\w+|destroy\w+|discard\w+)[^.]{0,40}(gmp|cgmp|batch|original|raw|analytical) (records?|documents?|data)
     examples:
       - Investigators found torn batch record pages in a waste bin near the filling line.
@@ -706,7 +707,8 @@ modes:
     cfr: ["21 CFR 211.68(b)", "21 CFR 211.194(a)", "21 CFR 211.192"]
     related: [CS-DI-003, CS-LAB-005]
     rules:
-      - (trial|test|demo|practice|unofficial|prep) (injections?|runs?|samples?|analys[ie]s)
+      - (trial|demo|practice|unofficial|prep|test) injections?
+      - (trial|demo|practice|unofficial) (runs?|samples?|analys[ie]s)
       - (injections?|runs?)[^.]{0,40}(not (documented|reported|recorded))
     examples:
       - The CDS contained trial injections of release samples that were not reported or investigated.

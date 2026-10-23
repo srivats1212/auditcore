@@ -2,6 +2,9 @@
 
 Counting rules, stated on every published statistic:
 - the unit is the citation, not the document;
+- a failure-mode total counts each observation once: an observation citing
+  five CFR sections is five citations but one finding of that mode. The CFR
+  breakdown counts citations (one per cited section);
 - only human-accepted tags count;
 - only current document versions count (superseded versions are excluded);
 - a citation is counted once per mode even if rules and LLM both proposed it;
@@ -35,6 +38,7 @@ def _accepted_rows(session: Session, taxonomy_version: str):
         select(
             FailureMode.mode_id,
             Citation.id.label("citation_id"),
+            Observation.id.label("observation_id"),
             Observation.kind,
             Observation.observed_date,
             Observation.document_id,
@@ -62,7 +66,7 @@ def compute_annual_stats(session: Session, taxonomy_version: str) -> int:
         sections = ["", r.section or ""] if r.section else [""]  # "" row = all CFR sections combined
         for sec in sections:
             g = groups[(r.observed_date.year, r.mode_id, sec, r.kind)]
-            g["c"].add(r.citation_id)
+            g["c"].add(r.observation_id if sec == "" else r.citation_id)
             g["d"].add(r.document_id)
             if r.facility_id:
                 g["f"].add(r.facility_id)
@@ -193,6 +197,6 @@ def methodology_note(session: Session, taxonomy_version: str, mode_ids: list[str
     return MethodologyNote(
         corpus="published FDA warning letters and published Form 483s only; most 483s are never published",
         date_range=(min(years) if years else None, max(years) if years else None),
-        counting="citations, not documents; human-accepted tags only; current document versions; one count per citation per mode",
+        counting="citations, not documents; a failure-mode total counts each observation once; human-accepted tags only; current document versions",
         evaluation=evals,
     )

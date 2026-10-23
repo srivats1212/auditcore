@@ -23,9 +23,11 @@ _483_HEADER = re.compile(r"(?im)^\s*OBSERVATION\s+(\d{1,3})\b[.:]?\s*")
 
 # Warning-letter violations are numbered paragraphs, usually "1. Your firm failed ...".
 _WL_ITEM = re.compile(r"(?m)^\s*(\d{1,2})\.\s+(?=\S)")
+# API letters (ICH Q7) say "deviations" where finished-drug letters say "violations".
 _WL_START_HINT = re.compile(
-    r"(?i)\b(significant violations|violations? (?:include|are as follows)|"
-    r"observed (?:the following|significant)|cgmp violations|violations? of)\b"
+    r"(?i)\b(significant (?:violations|deviations)|(?:violations?|deviations?) (?:include|are as follows)|"
+    r"(?:violations?|deviations?) (?:were|was) (?:observed|identified|documented)|"
+    r"observed (?:the following|significant)|cgmp (?:violations|deviations)|violations? of)\b"
 )
 _WL_STOP = re.compile(
     r"(?im)^\s*(data integrity remediation|cgmp consultant recommended|conclusion|"
@@ -47,8 +49,20 @@ def split_483(text: str) -> list[Segment]:
 
 def split_warning_letter(text: str) -> list[Segment]:
     hint = _WL_START_HINT.search(text)
-    region_start = hint.start() if hint else 0
-    stop = _WL_STOP.search(text, region_start)
+    segments = _numbered_items(text, hint.start() if hint else 0)
+    if not segments and hint is not None:
+        segments = _numbered_items(text, 0)  # hint matched after the list; scan the whole letter
+    return segments
+
+
+def _numbered_items(text: str, region_start: int) -> list[Segment]:
+    # Stop headings only count after the first violation: some letters say
+    # "This letter notifies you..." in the introduction.
+    first = next((m for m in _WL_ITEM.finditer(text, region_start) if m.group(1) == "1"), None)
+    if first is None:
+        return []
+    region_start = first.start()
+    stop = _WL_STOP.search(text, first.end())
     region = text[region_start : stop.start() if stop else len(text)]
 
     items = list(_WL_ITEM.finditer(region))
@@ -78,23 +92,39 @@ class CitationDraft:
     cfr: CfrRef | None
 
 
-def split_citations(observation_text: str) -> list[CitationDraft]:
-    """One citation per (sub-item, CFR reference). CFR references in the lead
-    sentence apply to every sub-item. An observation with no CFR reference is
-    still one citation (most 483 observations cite no CFR section)."""
-    subs = [m.start() for m in _SUBITEM.finditer(observation_text)]
-    if subs:
-        lead = observation_text[: subs[0]].strip()
-        bounds = subs + [len(observation_text)]
-        parts = [observation_text[bounds[i] : bounds[i + 1]].strip() for i in range(len(subs))]
-    else:
-        lead, parts = "", [observation_text.strip()]
+# The cited sections sit in the violation's heading sentence, which ends at
+# the first ")." or the first sentence break.
+_LEAD_END = re.compile(r"\)\.(?=\s|$)|(?<=[a-z0-9])\.\s+(?=[A-Z])|\n")
 
-    lead_refs = extract_cfr(lead) if lead else []
+
+def lead_sentence(text: str) -> str:
+    m = _LEAD_END.search(text)
+    return text[: m.end()] if m else text
+
+
+def split_citations(observation_text: str) -> list[CitationDraft]:
+    """One citation per (sub-item, cited CFR section).
+
+    The cited sections are the ones in the heading sentence ("Your firm failed
+    to ... (21 CFR 211.68(b))."). Sections mentioned later in the discussion,
+    or in boilerplate such as "21 CFR parts 210 and 211", are not citations.
+    Only when the heading cites nothing do we fall back to the whole text.
+    Lettered sub-items inherit the heading's sections. An observation with no
+    CFR reference is still one citation (most 483 observations cite none)."""
+    text = observation_text.strip()
+    subs = [m.start() for m in _SUBITEM.finditer(text)]
+    if subs and subs[0] > 0:
+        lead = text[: subs[0]].strip()
+        bounds = subs + [len(text)]
+        parts = [text[bounds[i] : bounds[i + 1]].strip() for i in range(len(subs))]
+    else:
+        lead, parts = "", [text]
+
+    heading_refs = extract_cfr(lead_sentence(lead or text)) or extract_cfr(lead or text)
     drafts: list[CitationDraft] = []
     for part in parts:
         body = f"{lead} {part}".strip() if lead else part
-        refs = extract_cfr(part) or lead_refs or extract_cfr(body)
+        refs = (extract_cfr(lead_sentence(part)) if lead else []) or heading_refs
         for ref in refs or [None]:
             drafts.append(CitationDraft(len(drafts), body, ref))
     return drafts

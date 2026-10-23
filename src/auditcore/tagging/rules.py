@@ -54,12 +54,15 @@ _DEFICIENCY = re.compile(
 
 # Imperative or advisory language FDA uses when requesting remediation.
 _REMEDIATION_REQUEST = re.compile(
-    r"^\s*(\(?[a-z0-9]{1,3}[.)]\s*)?("
+    r"^\s*(\(?[a-z0-9]{1,3}[.)]\s*)?((additionally|also|further(more)?|moreover|however|finally),?\s+)?("
     r"your response should|in response to this letter|please (provide|include|submit)|"
     r"provide (a|an|the|your)|include (a|an|the)|we (recommend|request|strongly recommend)|"
     r"fda (recommends|requests)|you should|a (comprehensive|detailed|thorough) (assessment|evaluation|review)|"
     r"an? (independent|retrospective) (assessment|review|evaluation)|"
-    r"(see|refer to) fda'?s guidance)",
+    r"(see|refer to) fda'?s guidance|"
+    # Summaries of the firm's response describe commitments, not FDA findings.
+    r"in (your|its|their) (response|reply)|in response to (our|the) (inspection|form fda 483|observations?)|"
+    r"(you|your firm) (committed|commit|propose[sd]?|plan(ned)?|stated|state) to)",
     re.IGNORECASE,
 )
 

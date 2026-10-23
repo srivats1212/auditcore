@@ -44,8 +44,8 @@ pytest
 ```sh
 # 1. Ingest (every run is idempotent and logged in ingestion_run)
 auditcore ingest dashboard --product-type Drugs     # inspections, compliance actions
-auditcore ingest wl warning_letters.xlsx            # index export from the FDA Warning Letters page, then each letter
-auditcore ingest 483                                # OII reading room listing; archives every PDF on sight
+auditcore ingest wl --subject CGMP                  # Warning Letters listing (all pages), then each new letter
+auditcore ingest 483                                # OII reading room listing; archives every new PDF on sight
 auditcore ingest 483-files pdfs/*.pdf --manifest manifest.csv   # PDFs saved by hand
 auditcore ingest runs
 
@@ -115,6 +115,20 @@ auditcore serve
   `AUDITCORE_PRECISION_BAR` (0.85) with at least 3 gold positives. Everything
   else shows as "in review".
 - **Counting.** Only human-accepted tags on current document versions count.
+  A failure-mode total counts each observation once; a violation citing three
+  CFR sections is three citations in the CFR breakdown but one finding. A
+  review decision applies to all sibling citations with the same text.
+- **Cited sections come from the violation heading.** CFR sections mentioned
+  later in the discussion, or boilerplate like "21 CFR parts 210 and 211", are
+  not citations.
+- **FDA listings are paged from their AJAX endpoint.** The Warning Letters
+  XLSX export has no letter links or CMS numbers and stops at 1,000 rows, so
+  it is not used as the index (`--xlsx` remains for offline files that do
+  have links). Letter fetching is incremental; `--refetch` re-checks stored
+  letters for revisions.
+- **483 PDFs are cropped to the observations area** on each page, so the
+  repeated header and signature footer never splice into an observation that
+  crosses a page break. The FEI is read from the first page header.
 - **LLM.** Claude (`claude-opus-5-5`, effort `medium`) with JSON-schema output
   constrained to taxonomy IDs, the taxonomy as a cached system-prompt prefix,
   and server-side refusal fallback enabled. A proposed tag is dropped unless
@@ -128,11 +142,15 @@ auditcore serve
   the gold set.
 - **Remediation patterns are not written.** Only the template exists. These
   are the practitioner-written moat and should come from you.
-- **Live FDA endpoints are untested.** The sandbox this was built in could not
-  reach fda.gov. Parsers are tested against synthetic fixtures; expect to
-  adjust column names and HTML selectors on first real run. The Dashboard
-  field names follow its published columns but have not been verified with a
-  live key.
+- **Data Dashboard API is untested live.** fda.gov (letters, listings,
+  reading-room PDFs) was verified end to end on 2026-10-23, but
+  `api-datadashboard.fda.gov` was not reachable from the build environment and
+  no key was available. Field names follow the dashboard's published columns.
+- **Rules were spot-checked, not evaluated.** On 40 recent CGMP drug letters the
+  rules fire rarely and mostly correctly after tuning; recall is low by design
+  and comes from the LLM stage. Real precision and recall come from the gold set.
+- **483 OCR quality varies.** Common misreads are fixed ("fnm", "diug",
+  "perfo1med"); the rest is left for the LLM stage and review.
 - **Image-only 483 PDFs** are flagged `needs_ocr` in `document.meta`; no OCR
   engine is wired in yet (Tesseract via `ocrmypdf` is the obvious choice).
 - **No migrations.** `auditcore init` uses `create_all`. Add Alembic before the

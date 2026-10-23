@@ -92,3 +92,10 @@ def test_inline_hyphen_break_and_suspended_hyphen():
 def test_glued_observation_heading_is_split():
     out = clean_text("Header text O B S E R V A T I O N 1 First finding.")
     assert split_483(out)[0].number == 1
+
+
+def test_stop_heading_in_introduction_does_not_end_the_list():
+    text = ("Intro.\nThis letter notifies you of the violations of the Act.\n"
+            "We observed significant violations:\n1. You did not identify controls.\n2. You did not validate them.\n"
+            "Conclusion\nEnd.")
+    assert [s.number for s in split_warning_letter(text)] == [1, 2]
