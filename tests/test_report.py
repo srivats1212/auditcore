@@ -119,3 +119,18 @@ def test_report_since_year_drops_earlier_years(session, taxonomy, tmp_path):
     data = report_data(out["html"].read_text())
     assert data["years"] == [2022] and [f[1] for f in data["f"]] == [2022]
     assert len(out["csv"].read_text().splitlines()) == 3  # header plus both citations
+
+
+def test_repeated_483_observation_numbers_merge(session):
+    from auditcore.models import Document
+    from auditcore.tagging.pipeline import segment_document
+
+    text = ("OBSERVATION 1\nAudit trails were not reviewed.\nOBSERVATION 2\nBackups were not tested.\n"
+            "AMENDMENT 1\nOBSERVATION 1\nThe audit trail review SOP was not followed.")
+    doc = Document(source="form_483", source_key="483:amended", content_hash="am", raw_path="x",
+                   media_type="application/pdf", text_raw=text, meta={"record_type": "Amended 483"})
+    session.add(doc)
+    session.flush()
+    obs = sorted(segment_document(session, doc), key=lambda o: o.number)
+    assert [o.number for o in obs] == [1, 2]
+    assert "Audit trails were not reviewed" in obs[0].text and "SOP was not followed" in obs[0].text

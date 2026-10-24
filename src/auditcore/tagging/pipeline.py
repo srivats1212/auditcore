@@ -80,6 +80,13 @@ def segment_document(session: Session, doc: Document) -> list[Observation]:
     else:
         return []
 
+    # Amended 483s can repeat an observation number ("AMENDMENT 2 ... 1B");
+    # one number is one observation, so repeated numbers are merged.
+    merged: dict[int, str] = {}
+    for seg in segments:
+        merged[seg.number] = f"{merged[seg.number]}\n\n{seg.text}" if seg.number in merged else seg.text
+    segments = [type(segments[0])(number=n, text=t) for n, t in merged.items()] if segments else []
+
     observations = []
     for seg in segments:
         obs = Observation(document_id=doc.id, kind=kind, number=seg.number, text=seg.text, **links)
@@ -291,7 +298,14 @@ def run_pipeline(session: Session, taxonomy: Taxonomy, *, tagger: LlmTagger | No
     citations: list[Citation] = []
     for doc in docs[:limit] if limit else docs:
         stats["documents"] += 1
-        for obs in segment_document(session, doc):
+        try:
+            with session.begin_nested():  # one malformed document must not stop the run
+                observations = segment_document(session, doc)
+        except Exception as exc:
+            stats["segment_errors"] = stats.get("segment_errors", 0) + 1
+            log.warning("could not segment document %s (%s): %s", doc.id, doc.source_key, exc)
+            continue
+        for obs in observations:
             stats["observations"] += 1
             for citation in obs.citations:
                 stats["citations"] += 1
