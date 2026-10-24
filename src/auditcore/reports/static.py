@@ -116,6 +116,31 @@ def export_csv(rows: list[Row], path: Path) -> int:
     return len(rows)
 
 
+def export_reviewed_csv(rows: list[Row], path: Path, taxonomy: Taxonomy,
+                        evidence: dict[tuple[int, str], str]) -> int:
+    """Citations with at least one finding a reviewer accepted, and only
+    those findings: no unreviewed proposals, nothing out of scope. This is
+    the export to share or sell."""
+    kept = [r for r in rows if r.accepted or r.accepted_paper]
+    name = lambda m: taxonomy.modes[m].name if m in taxonomy.modes else m  # noqa: E731
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["citation_id", "observation_id", "document_type", "observation_number", "issue_date",
+                    "facility", "fei", "establishment_type", "issuing_office", "subject", "cfr_cited",
+                    "failure_modes", "failure_mode_names", "paper_only_modes", "evidence", "source_url", "text"])
+        for r in kept:
+            modes = sorted(r.accepted) + sorted(r.accepted_paper)
+            w.writerow([r.citation_id, r.observation_id, "Form 483" if r.kind == "483" else "Warning letter",
+                        r.number, r.observed.isoformat() if r.observed else "", r.facility or "", r.fei or "",
+                        r.establishment or "", r.office or "", r.subject or "", r.cfr or "",
+                        ";".join(sorted(r.accepted)), ";".join(name(m) for m in sorted(r.accepted)),
+                        ";".join(sorted(r.accepted_paper)),
+                        " | ".join(f"{m}: {evidence[(r.citation_id, m)]}" for m in modes if (r.citation_id, m) in evidence),
+                        r.source_url or "", r.text])
+    return len(kept)
+
+
 # ---------------------------------------------------------------- HTML
 
 EXCERPT_CHARS = 900
@@ -172,7 +197,11 @@ def build_report(session: Session, taxonomy: Taxonomy, out_dir: Path, *, samples
     scope = [r for r in rows if r.in_scope and (since_year is None or (r.observed and r.observed.year >= since_year))]
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / "citations.csv"
-    export_csv(rows, csv_path)
+    evidence = _evidence(session)
+    if basis == "reviewed":
+        n_csv = export_reviewed_csv(scope, csv_path, taxonomy, evidence)
+    else:
+        n_csv = export_csv(rows, csv_path)
 
     def tags_of(r: Row) -> list[str]:
         # A reviewer's decision wins over a pending proposal for the same mode.
@@ -184,7 +213,6 @@ def build_report(session: Session, taxonomy: Taxonomy, out_dir: Path, *, samples
         if basis == "reviewed":
             return r.accepted_paper
         return r.accepted_paper + [m for m in r.proposed_paper if m not in r.accepted and m not in r.accepted_paper]
-    evidence = _evidence(session)
 
     kinds = {"wl": 0, "483": 1}
     doc_index: dict[tuple[str, str], int] = {}
@@ -261,7 +289,7 @@ def build_report(session: Session, taxonomy: Taxonomy, out_dir: Path, *, samples
         "samples": picks,
         "excluded": len(excluded_docs),
         "csv": csv_path.name,
-        "csvRows": len(rows),
+        "csvRows": n_csv,
         "taxonomy": taxonomy.version,
     }
     payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False).replace("</", "<\\/")
@@ -719,7 +747,9 @@ footer { margin-top:48px; font-size:.8rem; color:var(--muted); }
         p.sort(function (a, b) { return sum(D.paper[b]) - sum(D.paper[a]); }).map(function (m) { return D.modes[m][0] + " (" + sum(D.paper[m]) + ")"; }).join(", ") + "."
       : "No paper-only data-integrity findings were excluded.";
     var f = clear(document.getElementById("footer"));
-    f.appendChild(document.createTextNode("Generated " + D.generated + " by auditcore. Every citation, including excluded ones, is in "));
+    f.appendChild(document.createTextNode("Generated " + D.generated + " by auditcore. " + (D.basis === "reviewed"
+      ? "Every reviewed citation, with its accepted failure modes and evidence, is in "
+      : "Every citation, including excluded ones, is in ")));
     f.appendChild(el("a", { href: D.csv, text: D.csv }));
     f.appendChild(document.createTextNode(" (" + fmt(D.csvRows) + " rows)."));
   }

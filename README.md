@@ -222,7 +222,10 @@ auditcore serve
   plus pending proposals, leaves out rejected ones, marks each sample
   Reviewed or Unreviewed, and has a Reviewed only switch, so a partly
   reviewed corpus still shows everything. `--basis reviewed` writes only
-  accepted findings into the file, for sharing.
+  accepted findings into the file, for sharing, and its `citations.csv`
+  holds only in-scope citations with an accepted finding: failure-mode IDs
+  and names, paper-only modes, the evidence quote, source link and text,
+  with no unreviewed proposals. Anything you charge for should use it.
 
 ## Not done yet
 

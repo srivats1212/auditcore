@@ -83,6 +83,15 @@ def test_basis_draft_mixes_reviewed_and_pending_and_reviewed_keeps_only_accepted
     assert sorted((f[0], f[1]) for f in shared["f"]) == [("CS-AUD-002", 2022), ("CS-DI-001", 2024)]
     assert all(s["rv"] for ss in shared["samples"].values() for s in ss)  # nothing unreviewed in the file
 
+    import csv as _csv
+    rows = list(_csv.DictReader((tmp_path / "r" / "citations.csv").open()))
+    assert sorted(r["failure_modes"] for r in rows) == ["CS-AUD-002", "CS-DI-001"]  # pending and rejected left out
+    di = next(r for r in rows if r["failure_modes"] == "CS-DI-001")
+    assert di["paper_only_modes"] == "" and "proposed_modes_unreviewed" not in rows[0]  # reviewer said electronic
+    aud = next(r for r in rows if r["failure_modes"] == "CS-AUD-002")
+    assert aud["failure_mode_names"] == "Audit trail not routinely reviewed"
+    assert aud["evidence"].startswith("CS-AUD-002: Audit trails on the HPLC") and aud["issue_date"] == "2022-06-01"
+
 
 def test_excerpt_centres_on_late_evidence():
     text = "Intro. " * 200 + "The audit trail was disabled on the GC." + " Tail." * 200
