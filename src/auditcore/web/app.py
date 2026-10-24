@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import re
 import secrets
-from urllib.parse import urlencode
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -210,6 +210,15 @@ def create_app(*, database_url: str | None = None, content_dir: Path | str = "co
     return app
 
 
+def review_years(s: Session) -> list[int]:
+    """Issue years that have at least one tagged citation, newest first."""
+    rows = s.scalars(select(Observation.observed_date).distinct()
+                     .join(Citation, Citation.observation_id == Observation.id)
+                     .join(FailureMode, FailureMode.citation_id == Citation.id)
+                     .where(FailureMode.mode_id != "NONE", Observation.observed_date.is_not(None)))
+    return sorted({d.year for d in rows}, reverse=True)
+
+
 def _add_review_routes(app: FastAPI, db, render, tax: Taxonomy, reviewer: str) -> None:
     # Per-process token on every form: no login, but another site open in the
     # same browser cannot post decisions to this page.
@@ -217,15 +226,17 @@ def _add_review_routes(app: FastAPI, db, render, tax: Taxonomy, reviewer: str) -
 
     @app.get("/review", response_class=HTMLResponse)
     def review_page(request: Request, state: str = "pending", mode: str = "", proposer: str = "",
-                    disagree: str = "", low: str = "", paper: str = "", page: int = 1, focus: int = 0,
-                    s: Session = Depends(db)):
+                    disagree: str = "", low: str = "", paper: str = "", year: str = "", page: int = 1,
+                    focus: int = 0, s: Session = Depends(db)):
         state = state if state in ("pending", "decided") else "pending"
+        year = year if year.isdigit() else ""
         items = review_items(s, state=state, mode_id=mode or None, proposer=proposer or None,
-                             disagreements=disagree == "1", low_confidence=low == "1", paper=paper or None)
+                             disagreements=disagree == "1", low_confidence=low == "1", paper=paper or None,
+                             year=int(year) if year else None)
         pages = max(1, -(-len(items) // REVIEW_PER_PAGE))
         page = min(max(page, 1), pages)
         shown = items[(page - 1) * REVIEW_PER_PAGE: page * REVIEW_PER_PAGE]
-        params = dict(state=state, mode=mode, proposer=proposer, disagree=disagree, low=low, paper=paper)
+        params = dict(state=state, mode=mode, proposer=proposer, disagree=disagree, low=low, paper=paper, year=year)
         query = urlencode({k: v for k, v in params.items() if v})
         info = {}
         for i in shown:
@@ -233,7 +244,7 @@ def _add_review_routes(app: FastAPI, db, render, tax: Taxonomy, reviewer: str) -
             info[i.citation_id] = (c, c.observation, c.observation.document)
         return render(request, "review.html", items=shown, total=len(items), page=page, pages=pages,
                       params=params, query=query, focus=focus, progress=progress(s), reviewer=reviewer,
-                      token=token, info=info, modes=sorted(tax.modes),
+                      token=token, info=info, modes=sorted(tax.modes), years=review_years(s),
                       history={(i.citation_id, i.mode_id): history(s, i.citation_id, i.mode_id) for i in shown},
                       marked={(i.citation_id, i.mode_id): highlight(i.text, [p.evidence for p in i.proposals])
                               for i in shown})

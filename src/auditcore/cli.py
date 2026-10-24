@@ -149,7 +149,7 @@ def cmd_review(a):
     tax = load_taxonomy()
     reviewer = a.reviewer
     with _session() as s:
-        items = review_items(s, state="decided" if a.amend else "pending", mode_id=a.mode)[:a.limit]
+        items = review_items(s, state="decided" if a.amend else "pending", mode_id=a.mode, year=a.year)[:a.limit]
         if not items:
             print("no decided tags to amend" if a.amend else "review queue is empty")
             return
@@ -334,7 +334,7 @@ def cmd_report(a):
     from .taxonomy.loader import load_taxonomy
 
     with _session() as s:
-        out = build_report(s, load_taxonomy(), Path(a.out), samples=a.samples, since_year=a.since)
+        out = build_report(s, load_taxonomy(), Path(a.out), samples=a.samples, since_year=a.since, basis=a.basis)
     print(f"report: {out['html']}\ncsv:    {out['csv']}")
 
 
@@ -412,6 +412,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--mode")
     x.add_argument("--limit", type=int, default=50)
     x.add_argument("--amend", action="store_true", help="change already-decided tags instead of reviewing new ones")
+    x.add_argument("--year", type=int, help="only findings issued in this year, e.g. 2025")
     x.set_defaults(fn=cmd_review)
     x = sub.add_parser("review-log", help="audit trail of review decisions")
     x.add_argument("--citation", type=int)
@@ -474,6 +475,9 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--out", default="reports")
     x.add_argument("--samples", type=int, default=3, help="sample citations kept per failure mode and year")
     x.add_argument("--since", type=int, help="first issue year in the report, e.g. 2021 (the CSV keeps everything)")
+    x.add_argument("--basis", choices=["draft", "reviewed"], default="draft",
+                   help="draft: accepted plus unreviewed proposals, with a reviewed-only switch; "
+                        "reviewed: accepted findings only, safe to share")
     x.set_defaults(fn=cmd_report)
 
     x = sub.add_parser("serve", help="run the web UI")

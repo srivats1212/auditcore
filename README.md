@@ -78,7 +78,7 @@ auditcore process --llm --llm-max 20   # rules + Claude proposals; reports token
 auditcore process --llm --llm-workers 6  # whole corpus, 6 calls in flight; resumable if interrupted
 
 # 3. Human review: nothing is counted until accepted here
-auditcore review --reviewer <you>          # terminal: a/p/e/r/s/q per proposed tag
+auditcore review --reviewer <you>          # terminal: a/p/e/r/s/q per proposed tag (--year 2025, --mode ...)
 auditcore review --reviewer <you> --amend  # change decided tags (accept, reject, paper/electronic), with a reason
 auditcore review-log                       # audit trail of every decision and change
 auditcore serve --review --reviewer <you>  # same review in a browser: http://127.0.0.1:8000/review
@@ -99,7 +99,8 @@ auditcore remediation check
 auditcore digest draft 2026-10    # data sections filled in, editor placeholders for the rest
 auditcore digest publish content/digest/2026-10.md
 auditcore lint
-auditcore report --out reports   # static report.html + citations.csv, opens from disk
+auditcore report --out reports --since 2021                    # draft: reviewed plus unreviewed, with a switch
+auditcore report --out share --since 2021 --basis reviewed     # accepted findings only, safe to send
 auditcore serve
 ```
 
@@ -173,8 +174,8 @@ auditcore serve
   highlighted evidence spans, mode definition, confidence, proposer, proposed
   and current paper/electronic flag; buttons and the CLI keys (`a` `p` `e`
   `r` `s`, plus `j`/`k` to move and `c` to open Change decision); filters by
-  mode, proposer, rules/LLM disagreement, low confidence (below 0.70) and
-  record type; progress (reviewed of total, accepted, running precision =
+  mode, issue year, proposer, rules/LLM disagreement, low confidence (below
+  0.70) and record type; progress (reviewed of total, accepted, running precision =
   accepted / decided); 50 items per page. It refuses to start on anything but
   127.0.0.1, is off unless `--review` is given, and has no login, so never
   expose it. Forms carry a per-process token so other sites open in the same
@@ -217,8 +218,11 @@ auditcore serve
   table with trend sparklines, categories, a card per mode with a year
   chart, CFR sections and sample citations (facility, date, source link,
   evidence highlighted), and the method. Filters: year, document type,
-  measure. It uses accepted tags once any exist, else unreviewed proposals,
-  and says which.
+  measure. With `--basis draft` (the default) it counts accepted findings
+  plus pending proposals, leaves out rejected ones, marks each sample
+  Reviewed or Unreviewed, and has a Reviewed only switch, so a partly
+  reviewed corpus still shows everything. `--basis reviewed` writes only
+  accepted findings into the file, for sharing.
 
 ## Not done yet
 

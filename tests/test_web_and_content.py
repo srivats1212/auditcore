@@ -202,7 +202,7 @@ def test_static_report_and_csv(session, archive, wl_html, taxonomy, tmp_path):
     out = build_report(session, taxonomy, tmp_path / "rep", samples=3)
     html = out["html"].read_text()
     data = report_data(html)
-    assert not data["accepted"] and "a person has not yet reviewed" in html     # unreviewed basis is stated
+    assert data["basis"] == "draft" and "a person has not yet reviewed" in html  # unreviewed basis is stated
     assert "CS-ACC-001" in data["modes"] and data["modes"]["CS-ACC-001"][0] == "Shared logins"
     assert data["years"] == [2025] and data["docs"]["2025"] == [1, 0]           # food letter not counted
     assert any("211.68" in f[4] for f in data["f"])                            # CFR sections per finding

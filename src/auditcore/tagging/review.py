@@ -19,12 +19,12 @@ the same state.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..models import Citation, FailureMode, ReviewEvent, utcnow
+from ..models import Citation, FailureMode, Observation, ReviewEvent, utcnow
 
 # "Low confidence" filter: the most confident proposal is below this.
 LOW_CONFIDENCE = 0.7
@@ -52,6 +52,7 @@ class ReviewItem:
     proposals: list[FailureMode]  # machine (rules, LLM) rows for this pair, any status
     human: FailureMode | None = None
     llm_seen: bool = False  # the LLM stage has looked at this citation
+    year: int | None = None  # issue year of the letter or 483
     _rows: list[FailureMode] = field(default_factory=list, repr=False)
 
     @property
@@ -117,24 +118,30 @@ def _aware(dt: datetime) -> datetime:
 
 def review_items(session: Session, *, state: str = "pending", mode_id: str | None = None,
                  proposer: str | None = None, disagreements: bool = False, low_confidence: bool = False,
-                 paper: str | None = None) -> list[ReviewItem]:
+                 paper: str | None = None, year: int | None = None) -> list[ReviewItem]:
     """Review items, one per finding: sibling citations (same observation and
     text, one per cited CFR section) collapse into one item because a
     decision covers them all.
 
     state: pending (a proposal awaits a decision), decided, or all.
     proposer: rules, llm, or both. paper: paper or electronic (the flag that
-    would count: the reviewer's if accepted, else the proposal's)."""
-    q = (select(FailureMode, Citation.observation_id, Citation.text)
+    would count: the reviewer's if accepted, else the proposal's). year:
+    issue year of the letter or 483."""
+    q = (select(FailureMode, Citation.observation_id, Citation.text, Observation.observed_date)
          .join(Citation, FailureMode.citation_id == Citation.id)
+         .join(Observation, Citation.observation_id == Observation.id)
          .where(FailureMode.mode_id != "NONE"))
     if mode_id:
         q = q.where(FailureMode.mode_id == mode_id)
+    if year:
+        q = q.where(Observation.observed_date >= date(year, 1, 1), Observation.observed_date < date(year + 1, 1, 1))
     groups: dict[tuple[int, str, str], dict[int, list[FailureMode]]] = {}
     texts: dict[int, str] = {}
-    for fm, obs_id, text in session.execute(q.order_by(FailureMode.citation_id, FailureMode.id)):
+    years: dict[int, int | None] = {}
+    for fm, obs_id, text, observed in session.execute(q.order_by(FailureMode.citation_id, FailureMode.id)):
         groups.setdefault((obs_id, text, fm.mode_id), {}).setdefault(fm.citation_id, []).append(fm)
         texts[fm.citation_id] = text
+        years[fm.citation_id] = observed.year if observed else None
     llm_seen = set(session.scalars(select(FailureMode.citation_id).where(FailureMode.provenance == "llm").distinct()))
 
     items: list[ReviewItem] = []
@@ -147,7 +154,7 @@ def review_items(session: Session, *, state: str = "pending", mode_id: str | Non
         rows = by_cit[cid]
         items.append(ReviewItem(cid, mid, texts[cid], [r for r in rows if r.provenance != "human"],
                                 human=next((r for r in rows if r.provenance == "human"), None),
-                                llm_seen=cid in llm_seen, _rows=rows))
+                                llm_seen=cid in llm_seen, year=years.get(cid), _rows=rows))
 
     if state == "pending":
         items = [i for i in items if i.pending]

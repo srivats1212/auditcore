@@ -52,7 +52,7 @@ def test_year_breakdown_counts_each_violation_once(session, taxonomy, tmp_path):
     assert data["paper"] == {"CS-DI-001": {"2024": 1}}  # listed, not counted
     assert data["coverage"]["2024"] == [[3, 3], [0, 0]]  # every test citation carries an LLM row
     assert data["coverage"]["2023"] == [[0, 1], [0, 0]]  # the untagged letter
-    assert not data["accepted"] and data["excluded"] == 1
+    assert data["basis"] == "draft" and not any(f[5] for f in data["f"]) and data["excluded"] == 1
     # samples: at most `samples` per mode and year, newest first, with facility and link
     aud_samples = data["samples"]["CS-AUD-002"]
     assert [s["y"] for s in aud_samples] == [2024, 2022]
@@ -60,13 +60,28 @@ def test_year_breakdown_counts_each_violation_once(session, taxonomy, tmp_path):
     assert aud_samples[0]["h"] == [[0, len("Audit trails on the HPLC were not reviewed")]]
 
 
-def test_accepted_tags_replace_proposals_once_any_exist(session, taxonomy, tmp_path):
+def test_basis_draft_mixes_reviewed_and_pending_and_reviewed_keeps_only_accepted(session, taxonomy, tmp_path):
     aud = "Audit trails on the HPLC were not reviewed."
     o1 = letter(session, taxonomy, 1, 2022, aud, [("CS-AUD-002", False)])
-    letter(session, taxonomy, 2, 2023, aud, [("CS-AUD-002", False)])
+    letter(session, taxonomy, 2, 2023, aud, [("CS-AUD-002", False)])          # pending
+    o3 = letter(session, taxonomy, 3, 2024, aud, [("CS-AUD-002", False)])     # rejected
+    o4 = letter(session, taxonomy, 4, 2024, "Weights were written on scrap paper. More.", [("CS-DI-001", True)])
     decide(session, o1.citations[0].id, "CS-AUD-002", accept=True, reviewer="sk")
-    data = report_data(build_report(session, taxonomy, tmp_path)["html"].read_text())
-    assert data["accepted"] and [(f[0], f[1]) for f in data["f"]] == [("CS-AUD-002", 2022)]
+    decide(session, o3.citations[0].id, "CS-AUD-002", accept=False, reviewer="sk")
+    decide(session, o4.citations[0].id, "CS-DI-001", accept=True, reviewer="sk", paper_only=False)  # override
+
+    draft = report_data(build_report(session, taxonomy, tmp_path / "d")["html"].read_text())
+    assert draft["basis"] == "draft"
+    assert sorted((f[0], f[1], f[5]) for f in draft["f"]) == [
+        ("CS-AUD-002", 2022, 1), ("CS-AUD-002", 2023, 0), ("CS-DI-001", 2024, 1)]  # rejected left out
+    assert draft["paper"] == {}  # the reviewer's electronic call beats the paper proposal
+    assert {s["y"]: s["rv"] for s in draft["samples"]["CS-AUD-002"]} == {2022: True, 2023: False}
+    assert "Reviewed only" in build_report(session, taxonomy, tmp_path / "d")["html"].read_text()
+
+    shared = report_data(build_report(session, taxonomy, tmp_path / "r", basis="reviewed")["html"].read_text())
+    assert shared["basis"] == "reviewed"
+    assert sorted((f[0], f[1]) for f in shared["f"]) == [("CS-AUD-002", 2022), ("CS-DI-001", 2024)]
+    assert all(s["rv"] for ss in shared["samples"].values() for s in ss)  # nothing unreviewed in the file
 
 
 def test_excerpt_centres_on_late_evidence():

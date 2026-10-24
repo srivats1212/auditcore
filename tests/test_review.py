@@ -331,3 +331,27 @@ def test_cli_amend(db_url, taxonomy, monkeypatch, capsys):
     cli.main(["review-log"])
     assert "accepted (paper only) -> accepted (electronic/hybrid)  by jt via cli  reason: printed from the LIMS" \
         in capsys.readouterr().out
+
+
+def test_year_filter(session, taxonomy, db_url, tmp_path):
+    a = finding(session, taxonomy, AUD, "CS-AUD-002", n=1)
+    b = finding(session, taxonomy, PAPER, "CS-DI-001", n=2, rules_paper=True)
+    b.observation.observed_date = date(2024, 2, 1)
+    session.flush()
+    assert [i.citation_id for i in review_items(session, year=2024)] == [b.id]
+    assert [i.year for i in review_items(session, year=2026)] == [2026]
+    assert review_items(session, year=2019) == []
+
+    engine = create_engine(db_url)
+    with Session(engine) as s:
+        x = finding(s, taxonomy, AUD, "CS-AUD-002", n=1)
+        y = finding(s, taxonomy, PAPER, "CS-DI-001", n=2, rules_paper=True)
+        y.observation.observed_date = date(2024, 2, 1)
+        s.commit()
+    (tmp_path / "c" / "remediation").mkdir(parents=True)
+    client = TestClient(create_app(database_url=db_url, content_dir=tmp_path / "c", taxonomy=taxonomy,
+                                   review=True, reviewer="sk"))
+    page = client.get("/review", params={"year": "2024"})
+    assert "1 item in this list" in page.text and "CS-DI-001" in page.text
+    assert '<option value="2026"' in page.text and '<option value="2024" selected' in page.text
+    assert "2 items in this list" in client.get("/review", params={"year": "x"}).text  # ignored

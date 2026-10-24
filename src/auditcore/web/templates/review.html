@@ -58,6 +58,10 @@ details.change > summary::-webkit-details-marker { display: none; }
     <select name="mode"><option value="">Any</option>
       {% for m in modes %}<option value="{{ m }}" {% if params.mode == m %}selected{% endif %}>{{ m }} {{ tax.modes[m].name }}</option>{% endfor %}
     </select></label>
+  <label>Year
+    <select name="year"><option value="">Any</option>
+      {% for y in years %}<option value="{{ y }}" {% if params.year == y|string %}selected{% endif %}>{{ y }}</option>{% endfor %}
+    </select></label>
   <label>Proposed by
     <select name="proposer"><option value="">Any</option>
       {% for v, l in [("rules", "Rules only"), ("llm", "LLM only"), ("both", "Both")] %}

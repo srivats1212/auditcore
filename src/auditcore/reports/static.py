@@ -153,20 +153,37 @@ def _excerpt(text: str, evidence: str | None) -> tuple[str, bool, bool, list[lis
     return excerpt, start > 0, end < len(text), marks
 
 
+BASES = ("draft", "reviewed")
+
+
 def build_report(session: Session, taxonomy: Taxonomy, out_dir: Path, *, samples: int = 3,
-                 since_year: int | None = None) -> dict[str, Path]:
+                 since_year: int | None = None, basis: str = "draft") -> dict[str, Path]:
     """Write report.html and citations.csv. ``samples`` is the number of
     sample citations kept per failure mode and year; ``since_year`` drops
-    earlier years from the HTML (the CSV keeps every citation)."""
+    earlier years from the HTML (the CSV keeps every citation).
+
+    ``basis``: "draft" counts every finding a reviewer has not rejected,
+    accepted ones and pending proposals alike, each marked reviewed or not,
+    and the page can switch to reviewed only. "reviewed" puts only accepted
+    findings in the file, so it is safe to share."""
+    if basis not in BASES:
+        raise ValueError(f"basis must be one of {BASES}")
     rows = load_rows(session)
     scope = [r for r in rows if r.in_scope and (since_year is None or (r.observed and r.observed.year >= since_year))]
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / "citations.csv"
     export_csv(rows, csv_path)
 
-    use_accepted = any(r.accepted for r in scope)
-    tags_of = (lambda r: r.accepted) if use_accepted else (lambda r: r.proposed)
-    paper_of = (lambda r: r.accepted_paper) if use_accepted else (lambda r: r.proposed_paper)
+    def tags_of(r: Row) -> list[str]:
+        # A reviewer's decision wins over a pending proposal for the same mode.
+        if basis == "reviewed":
+            return r.accepted
+        return r.accepted + [m for m in r.proposed if m not in r.accepted and m not in r.accepted_paper]
+
+    def paper_of(r: Row) -> list[str]:
+        if basis == "reviewed":
+            return r.accepted_paper
+        return r.accepted_paper + [m for m in r.proposed_paper if m not in r.accepted and m not in r.accepted_paper]
     evidence = _evidence(session)
 
     kinds = {"wl": 0, "483": 1}
@@ -191,7 +208,8 @@ def build_report(session: Session, taxonomy: Taxonomy, out_dir: Path, *, samples
         for m in tags_of(r):
             f = findings.setdefault((m, r.observation_id), {
                 "m": m, "y": r.observed.year, "k": kinds[r.kind], "d": doc_index[(r.kind, r.source_key)],
-                "c": [], "rows": []})
+                "c": [], "rows": [], "rv": False})
+            f["rv"] = f["rv"] or m in r.accepted
             if r.cfr_section and r.cfr_section not in f["c"]:
                 f["c"].append(r.cfr_section)
             f["rows"].append(r)
@@ -212,7 +230,7 @@ def build_report(session: Session, taxonomy: Taxonomy, out_dir: Path, *, samples
         picks[f["m"]].append({
             "y": f["y"], "k": f["k"], "fac": r.facility or "Facility not named", "fei": r.fei, "date": r.observed.isoformat(),
             "n": r.number, "cfr": ", ".join(f"21 CFR {c}" for c in f["c"]), "url": r.source_url, "t": text,
-            "a": cut_start, "b": cut_end, "h": marks, "id": r.citation_id})
+            "a": cut_start, "b": cut_end, "h": marks, "id": r.citation_id, "rv": f["rv"]})
 
     # How much of each year the LLM stage has read: a partly tagged corpus
     # undercounts the years it has not reached.
@@ -231,14 +249,14 @@ def build_report(session: Session, taxonomy: Taxonomy, out_dir: Path, *, samples
     data = {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "asOf": as_of.isoformat() if as_of else None,
-        "accepted": use_accepted,
+        "basis": basis,
         "years": years,
         "docs": {y: [len(docs_by_year[y][0]), len(docs_by_year[y][1])] for y in years},
         "obs": {y: [len(obs_by_year[y][0]), len(obs_by_year[y][1])] for y in years},
         "coverage": {y: cov[y] for y in years},
         "modes": {m: [taxonomy.modes[m].name, taxonomy.categories.get(taxonomy.modes[m].category, ""),
                       taxonomy.modes[m].definition] if m in taxonomy.modes else [m, "", ""] for m in used},
-        "f": [[f["m"], f["y"], f["k"], f["d"], f["c"]] for f in findings.values()],
+        "f": [[f["m"], f["y"], f["k"], f["d"], f["c"], 1 if f["rv"] else 0] for f in findings.values()],
         "paper": {m: dict(c) for m, c in paper.items()},
         "samples": picks,
         "excluded": len(excluded_docs),
@@ -341,6 +359,7 @@ footer { margin-top:48px; font-size:.8rem; color:var(--muted); }
   <div><span class="ctl-label">Year</span><span class="seg" id="years"></span></div>
   <div><span class="ctl-label">Documents</span><span class="seg" id="kinds"></span></div>
   <div><span class="ctl-label">Measure</span><span class="seg" id="measures"></span></div>
+  <div id="reviewed-ctl" hidden><span class="ctl-label">Findings</span><span class="seg" id="reviewed"></span></div>
 </div>
 
 <section class="tiles" id="tiles" aria-label="Summary"></section>
@@ -375,7 +394,8 @@ footer { margin-top:48px; font-size:.8rem; color:var(--muted); }
   "use strict";
   var D = JSON.parse(document.getElementById("report-data").textContent);
   var KIND = ["Warning letters", "Form 483s"];
-  var state = { year: null, kind: null, measure: "count", showAll: false };
+  var state = { year: null, kind: null, measure: "count", showAll: false, reviewed: false };
+  var nReviewed = D.f.filter(function (f) { return f[5]; }).length;
 
   function el(tag, attrs, kids) {
     var n = document.createElement(tag);
@@ -406,7 +426,7 @@ footer { margin-top:48px; font-size:.8rem; color:var(--muted); }
     return d ? 100 * count / d : 0;
   }
   function show(v) { return state.measure === "count" ? fmt(v) : v.toFixed(1); }
-  function rows() { return D.f.filter(function (f) { return kindOk(f[2]); }); }
+  function rows() { return D.f.filter(function (f) { return kindOk(f[2]) && (!state.reviewed || f[5]); }); }
   var lastYear = D.years[D.years.length-1];
   var partial = D.asOf && D.asOf.slice(5) !== "12-31";
   function yearLabel(y) { return partial && y === lastYear ? y + "*" : String(y); }
@@ -416,10 +436,18 @@ footer { margin-top:48px; font-size:.8rem; color:var(--muted); }
   document.getElementById("lede").textContent = "What FDA cited about computerized systems and electronic records in " +
     "published warning letters and Form 483s for drugs, biologics and devices, " + (y0 === y1 ? String(y0) : y0 + " to " + y1) +
     (partial ? " (" + y1 + " through " + D.asOf + ")" : "") + ".";
-  document.getElementById("basis").textContent = D.accepted
-    ? "Counts use findings accepted by a human reviewer."
-    : "Counts use machine-proposed tags (rules and Claude) that a person has not yet reviewed. Treat them as a draft: " +
-      "they show where enforcement concentrates, not verified totals.";
+  function basisText() {
+    if (D.basis === "reviewed")
+      return "Every finding in this report was accepted by a reviewer, who read the citation and the evidence.";
+    if (state.reviewed)
+      return "Showing only the " + fmt(nReviewed) + " findings a reviewer has accepted. Switch to All findings to include unreviewed proposals.";
+    if (!nReviewed)
+      return "Counts use machine-proposed tags (rules and Claude) that a person has not yet reviewed. Treat them as a draft: " +
+        "they show where enforcement concentrates, not verified totals.";
+    return fmt(nReviewed) + " of " + fmt(D.f.length) + " findings (" + Math.round(100 * nReviewed / D.f.length) + "%) have been " +
+      "accepted by a reviewer; the rest are machine proposals (rules and Claude) not yet reviewed, and rejected ones are left out. " +
+      "Sample citations say which.";
+  }
 
   // ---- LLM coverage
   function coverage() {
@@ -432,7 +460,7 @@ footer { margin-top:48px; font-size:.8rem; color:var(--muted); }
     });
     var seen = 0, all = 0;
     D.years.forEach(function (y) { [0, 1].forEach(function (k) { seen += D.coverage[y][k][0]; all += D.coverage[y][k][1]; }); });
-    if (!gaps.length || D.accepted) { box.hidden = true; return; }
+    if (!gaps.length) { box.hidden = true; return; }
     box.hidden = false;
     box.textContent = "Incomplete: the Claude tagging stage has read " + Math.round(100 * seen / Math.max(all, 1)) +
       "% of citations so far, so years and document types it has not reached are undercounted and the trends are not yet comparable. " +
@@ -621,6 +649,7 @@ footer { margin-top:48px; font-size:.8rem; color:var(--muted); }
     var meta = el("div", { cls: "smeta" }, [el("strong", { text: s.fac }), s.fei ? " · FEI " + s.fei : "",
       " · " + (s.k === 0 ? "Warning letter, violation " : "Form 483, observation ") + s.n,
       " · " + s.date, s.cfr ? " · " + s.cfr : "", " · ",
+      D.basis === "draft" ? el("span", { cls: "pill", text: s.rv ? "Reviewed" : "Unreviewed" }) : null, D.basis === "draft" ? " " : null,
       s.url ? el("a", { href: s.url, target: "_blank", rel: "noopener", text: "source" }) : "no source link"]);
     return el("div", { cls: "sample" }, [meta, el("div", { cls: "excerpt" }, parts)]);
   }
@@ -635,7 +664,7 @@ footer { margin-top:48px; font-size:.8rem; color:var(--muted); }
       }), { w: 300, h: 150, label: info[0] + " by year", fmt: function (v) { return state.measure === "count" ? String(Math.round(v)) : v.toFixed(1); },
         tip: function (s) { return yearLabel(s.y) + ": " + show(s.a); } });
       var cfr = Object.keys(x.cfr).sort(function (a, b) { return x.cfr[b] - x.cfr[a]; }).slice(0, 4);
-      var samples = (D.samples[m] || []).filter(function (s) { return yearOk(s.y) && kindOk(s.k); }).slice(0, 3);
+      var samples = (D.samples[m] || []).filter(function (s) { return yearOk(s.y) && kindOk(s.k) && (!state.reviewed || s.rv); }).slice(0, 3);
       var stats = el("div", { cls: "stats" }, [
         el("div", {}, [el("b", { text: fmt(x.total) }), " findings in ", el("b", { text: fmt(Object.keys(x.docs).length) }), " documents"]),
         el("div", {}, [el("b", { text: fmt(x.wl) }), " in warning letters, ", el("b", { text: fmt(x.f483) }), " in Form 483s"]),
@@ -677,8 +706,9 @@ footer { margin-top:48px; font-size:.8rem; color:var(--muted); }
       "Scope: drug, biologic and device letters (CDER, CBER, CDRH and the field divisions that inspect for them). " + D.excluded + " food and veterinary letters in the database are excluded.",
       "Unit: a finding is one numbered warning-letter violation or 483 observation tagged with one failure mode. A violation citing several CFR sections counts once per mode.",
       "Year is the calendar year of the warning-letter or 483 issue date." + (partial ? " " + lastYear + " runs through " + D.asOf + "." : ""),
-      "Failure modes come from taxonomy " + D.taxonomy + ". " + (D.accepted ? "Only findings a reviewer accepted are counted."
-        : "Tags are proposals from keyword rules and Claude, each backed by a verbatim evidence quote; none has been reviewed by a person yet."),
+      "Failure modes come from taxonomy " + D.taxonomy + ". " + (D.basis === "reviewed" || state.reviewed
+        ? "Only findings a reviewer accepted are counted."
+        : "Tags are proposals from keyword rules and Claude, each backed by a verbatim evidence quote, plus findings a reviewer accepted; proposals a reviewer rejected are left out."),
       "Per 100 documents divides by all in-scope documents issued that year, including ones with no computerized-systems finding."];
     var ul = clear(document.getElementById("method"));
     items.forEach(function (t) { ul.appendChild(el("li", { text: t })); });
@@ -699,6 +729,10 @@ footer { margin-top:48px; font-size:.8rem; color:var(--muted); }
     seg("years", [[null, "All years"]].concat(D.years.map(function (y) { return [y, yearLabel(y)]; })), "year");
     seg("kinds", [[null, "All"], [0, "Warning letters"], [1, "Form 483s"]], "kind");
     seg("measures", [["count", "Count"], ["rate", "Per 100 documents"]], "measure");
+    var rc = document.getElementById("reviewed-ctl");
+    rc.hidden = D.basis !== "draft" || !nReviewed;
+    if (!rc.hidden) seg("reviewed", [[false, "All findings"], [true, "Reviewed only"]], "reviewed");
+    document.getElementById("basis").textContent = basisText();
     var c = modeCounts(), order = sortedModes(c);
     coverage(); tiles(); trend(); modeTable(c, order); catTable(c, order); cards(c, order); cfrTable(c, order); method();
   }
