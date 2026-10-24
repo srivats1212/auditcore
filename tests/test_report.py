@@ -50,6 +50,8 @@ def test_year_breakdown_counts_each_violation_once(session, taxonomy, tmp_path):
     by_year = Counter((f[0], f[1]) for f in data["f"])
     assert by_year == {("CS-AUD-002", 2022): 1, ("CS-AUD-002", 2024): 2, ("CS-ACC-001", 2024): 1}
     assert data["paper"] == {"CS-DI-001": {"2024": 1}}  # listed, not counted
+    assert data["coverage"]["2024"] == [[3, 3], [0, 0]]  # every test citation carries an LLM row
+    assert data["coverage"]["2023"] == [[0, 1], [0, 0]]  # the untagged letter
     assert not data["accepted"] and data["excluded"] == 1
     # samples: at most `samples` per mode and year, newest first, with facility and link
     aud_samples = data["samples"]["CS-AUD-002"]
@@ -134,3 +136,31 @@ def test_repeated_483_observation_numbers_merge(session):
     obs = sorted(segment_document(session, doc), key=lambda o: o.number)
     assert [o.number for o in obs] == [1, 2]
     assert "Audit trails were not reviewed" in obs[0].text and "SOP was not followed" in obs[0].text
+
+
+def test_483_inline_headings_split_in_sequence():
+    from auditcore.text.segment import split_483
+
+    text = ("DURING AN INSPECTION OF YOUR FIRM (I) (WE) OBSERVED: OBSERVATION #1 Equipment is not cleaned. "
+            "As detailed in Observation 1 above, the SOP is old. Specifically, see Observation 3 for lots. "
+            "Observation 2: Procedures are not followed. Add Continuation Page Observation 3 Audit trails "
+            "are not reviewed.")
+    segs = split_483(text)
+    assert [s.number for s in segs] == [1, 2, 3]
+    assert segs[0].text.startswith("Equipment is not cleaned") and "detailed in Observation 1" in segs[0].text
+    assert segs[2].text == "Audit trails are not reviewed."
+
+
+def test_unnumbered_warning_letter_is_one_violation():
+    from auditcore.text.segment import split_warning_letter
+
+    text = ("Dear Ms. Example:\n\nThe FDA inspected your facility. Significant violations include, but are not "
+            "limited to, the following:\n\nFailure to submit a report to FDA no later than 30 calendar days after "
+            "becoming aware of a malfunction, as required by 21 CFR 803.50(a)(2). For example, the information "
+            "for incident 1 reasonably suggests the ventilator malfunctioned.\n\nPlease notify this office in "
+            "writing within fifteen business days.\n\nSincerely,\nDirector")
+    segs = split_warning_letter(text)
+    assert [s.number for s in segs] == [1]
+    assert segs[0].text.startswith("Significant violations include") and "Please notify" not in segs[0].text
+    numbered = "Dear X:\n\nWe observed significant violations, including:\n\n1. Your firm failed to review audit trails.\n\n2. Your firm failed to back up data."
+    assert [s.number for s in split_warning_letter(numbered)] == [1, 2]

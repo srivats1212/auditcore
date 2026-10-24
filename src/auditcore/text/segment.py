@@ -44,15 +44,39 @@ _WL_STOP = re.compile(
 )
 
 
+# Fallback for 483s whose headings are not on their own line, as OCR and
+# some form layouts produce: "WE OBSERVED: Observation 1", "OBSERVATION #1",
+# "... lots. Observation 2:". A heading must follow a line start, the
+# "OBSERVED:" label, or the end of a sentence, so references such as
+# "detailed in Observation 2" do not split.
+_483_INLINE = re.compile(r"(?i)(?:^|\n|OBSERVED\W{0,4}|[.;:!?)]\s|Page\s)\s*(OBSERVATION\s*#?\s*(\d{1,3})\b\s*[.:]?)")
+
+
 def split_483(text: str) -> list[Segment]:
-    matches = list(_483_HEADER.finditer(text))
+    matches = [(m.start(), m.end(), int(m.group(1))) for m in _483_HEADER.finditer(text)]
+    if not matches:
+        matches = _in_sequence([(m.start(1), m.end(1), int(m.group(2))) for m in _483_INLINE.finditer(text)])
     segments = []
-    for i, m in enumerate(matches):
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        body = text[m.end() : end].strip()
+    for i, (_, end_head, number) in enumerate(matches):
+        end = matches[i + 1][0] if i + 1 < len(matches) else len(text)
+        body = text[end_head:end].strip()
         if body:
-            segments.append(Segment(int(m.group(1)), body))
+            segments.append(Segment(number, body))
     return segments
+
+
+def _in_sequence(found: list[tuple[int, int, int]]) -> list[tuple[int, int, int]]:
+    """Keep headings that number 1, 2, 3... in order; anything else is a
+    reference to an earlier observation, not a new one."""
+    out, expected = [], 1
+    for item in found:
+        if item[2] == expected:
+            out.append(item)
+            expected += 1
+    return out
+
+
+_SALUTATION = re.compile(r"(?m)^\s*Dear\b[^\n]*\n")
 
 
 def split_warning_letter(text: str) -> list[Segment]:
@@ -60,7 +84,24 @@ def split_warning_letter(text: str) -> list[Segment]:
     segments = _numbered_items(text, hint.start() if hint else 0)
     if not segments and hint is not None:
         segments = _numbered_items(text, 0)  # hint matched after the list; scan the whole letter
+    if not segments:
+        segments = _single_violation(text, hint)
     return segments
+
+
+def _single_violation(text: str, hint) -> list[Segment]:
+    """Letters with one unnumbered violation written as prose ("Significant
+    violations include... Failure to submit..."), and records-request
+    refusals, carry the finding in the body. Treat the body, from the
+    violations sentence or the salutation to the usual closing sections, as
+    violation 1."""
+    start_m = hint or _SALUTATION.search(text)
+    if start_m is None:
+        return []
+    start = start_m.end() if start_m is not hint else start_m.start()
+    stop = _WL_STOP.search(text, start + 1)
+    body = text[start : stop.start() if stop else len(text)].strip()
+    return [Segment(1, body)] if len(body) >= 200 else []
 
 
 def _numbered_items(text: str, region_start: int) -> list[Segment]:

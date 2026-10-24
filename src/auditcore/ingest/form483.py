@@ -144,7 +144,8 @@ def pdf_text(data: bytes) -> tuple[str, dict]:
         meta["fei"] = fei
     if empty:
         meta["image_only_pages"] = empty
-        meta["needs_ocr"] = len(empty) == n_pages
+        # Scanned 483s often carry text only on FDA's boilerplate back page.
+        meta["needs_ocr"] = len(empty) >= max(1, n_pages - 1)
     # Single newline: an observation that crosses a page break reads as one paragraph.
     return "\n".join(pages), meta
 

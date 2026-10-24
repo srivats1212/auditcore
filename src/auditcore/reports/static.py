@@ -214,6 +214,16 @@ def build_report(session: Session, taxonomy: Taxonomy, out_dir: Path, *, samples
             "n": r.number, "cfr": ", ".join(f"21 CFR {c}" for c in f["c"]), "url": r.source_url, "t": text,
             "a": cut_start, "b": cut_end, "h": marks, "id": r.citation_id})
 
+    # How much of each year the LLM stage has read: a partly tagged corpus
+    # undercounts the years it has not reached.
+    llm_seen = set(session.scalars(select(FailureMode.citation_id).where(FailureMode.provenance == "llm").distinct()))
+    cov: dict[int, list[list[int]]] = defaultdict(lambda: [[0, 0], [0, 0]])
+    for r in scope:
+        if r.observed is not None:
+            c = cov[r.observed.year][kinds[r.kind]]
+            c[0] += r.citation_id in llm_seen
+            c[1] += 1
+
     years = sorted(docs_by_year)
     as_of = max((r.observed for r in scope if r.observed), default=None)
     used = sorted({f["m"] for f in findings.values()} | set(paper))
@@ -225,6 +235,7 @@ def build_report(session: Session, taxonomy: Taxonomy, out_dir: Path, *, samples
         "years": years,
         "docs": {y: [len(docs_by_year[y][0]), len(docs_by_year[y][1])] for y in years},
         "obs": {y: [len(obs_by_year[y][0]), len(obs_by_year[y][1])] for y in years},
+        "coverage": {y: cov[y] for y in years},
         "modes": {m: [taxonomy.modes[m].name, taxonomy.categories.get(taxonomy.modes[m].category, ""),
                       taxonomy.modes[m].definition] if m in taxonomy.modes else [m, "", ""] for m in used},
         "f": [[f["m"], f["y"], f["k"], f["d"], f["c"]] for f in findings.values()],
@@ -322,6 +333,7 @@ footer { margin-top:48px; font-size:.8rem; color:var(--muted); }
   <h1>FDA computerized-systems enforcement</h1>
   <p class="lede" id="lede"></p>
   <div class="banner" id="basis"></div>
+  <div class="banner" id="coverage" hidden></div>
 </header>
 <noscript><p class="banner">This report draws its tables and charts with JavaScript. Enable it, or use the CSV next to this file.</p></noscript>
 
@@ -408,6 +420,24 @@ footer { margin-top:48px; font-size:.8rem; color:var(--muted); }
     ? "Counts use findings accepted by a human reviewer."
     : "Counts use machine-proposed tags (rules and Claude) that a person has not yet reviewed. Treat them as a draft: " +
       "they show where enforcement concentrates, not verified totals.";
+
+  // ---- LLM coverage
+  function coverage() {
+    var box = document.getElementById("coverage"), gaps = [];
+    D.years.forEach(function (y) {
+      [0, 1].forEach(function (k) {
+        var c = D.coverage[y][k];
+        if (c[1] && c[0] < c[1] * 0.98) gaps.push(yearLabel(y) + " " + (k ? "483s" : "letters") + " " + Math.round(100 * c[0] / c[1]) + "%");
+      });
+    });
+    var seen = 0, all = 0;
+    D.years.forEach(function (y) { [0, 1].forEach(function (k) { seen += D.coverage[y][k][0]; all += D.coverage[y][k][1]; }); });
+    if (!gaps.length || D.accepted) { box.hidden = true; return; }
+    box.hidden = false;
+    box.textContent = "Incomplete: the Claude tagging stage has read " + Math.round(100 * seen / Math.max(all, 1)) +
+      "% of citations so far, so years and document types it has not reached are undercounted and the trends are not yet comparable. " +
+      "Coverage below 98%: " + gaps.join(", ") + ".";
+  }
 
   // ---- controls
   function seg(id, items, key) {
@@ -670,7 +700,7 @@ footer { margin-top:48px; font-size:.8rem; color:var(--muted); }
     seg("kinds", [[null, "All"], [0, "Warning letters"], [1, "Form 483s"]], "kind");
     seg("measures", [["count", "Count"], ["rate", "Per 100 documents"]], "measure");
     var c = modeCounts(), order = sortedModes(c);
-    tiles(); trend(); modeTable(c, order); catTable(c, order); cards(c, order); cfrTable(c, order); method();
+    coverage(); tiles(); trend(); modeTable(c, order); catTable(c, order); cards(c, order); cfrTable(c, order); method();
   }
   render();
 })();
